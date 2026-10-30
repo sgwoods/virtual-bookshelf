@@ -6,7 +6,7 @@ working version: what's done, what's next, and what Phase 1a taught us.
 
 ```
 Phase 1a  photos → books.csv                      ✅ done (Oct 28)
-Phase 1b  resolve → SQLite → browsable catalogue  ⏭ next
+Phase 1b  resolve → SQLite → browsable catalogue  🔨 in progress (steps 1–2 built)
 Phase 2   lists, tags, notes, reading status
 Phase 3a  quotes and topics across books
 Phase 3b  discovery: gaps, adjacent authors, what to buy
@@ -19,22 +19,29 @@ Phase 2.** A catalogue with wrong books in it poisons everything downstream.
 
 ## Phase 1b — next steps, in order
 
-### 1. Resolve against Open Library  *(~1 evening)*
+### 1. Resolve against Open Library  ✅ built — `scripts/resolve.py`, awaiting first live run
 `scripts/resolve.py`: for each row in `books.csv`, query the Open Library
 search API (`/search.json?title=…&author=…`), pick the best work match, and
 record `ol_work_id`, `first_publish_year`, `subjects`, `isbn` candidates and a
 `cover_id`. Google Books as fallback for misses. Cache every response to disk
 so re-runs are free and polite.
 
-Output: `data/resolved.csv` plus a match score per row. Expect most of the
+Output: `data/resolved.csv` plus a match score per row. Built with the
+standard library only; tested offline against stubbed responses and 13
+hand-picked hard cases (series tags, subtitles, *Dune* vs *Dune Messiah*,
+diacritics, number words). Not yet run against the live API — the build
+environment can't reach it — so the first `--limit 20` run on the Mac is the
+real test. Expect most of the
 classic SF to match cleanly; the likely misses are the CS monographs, the
 theses, the exhibition catalogues and the Coteau/Red Deer small-press books.
 
-### 2. Review page  *(~1 evening)*
+### 2. Review page  ✅ built — `scripts/review.py`
 A single local page listing every row that is (a) below high confidence from
 the spine read, or (b) a weak/no Open Library match. Each row shows the
-cropped spine image next to the proposed match, with accept / pick another /
-type it in. Writes corrections back to `books.csv`. This is where the 12
+spine read, a link to its shelf photo, and up to four candidates with covers;
+actions are use-this / not listed / not a book / fix the spine read.
+(Cropped spine images need per-spine bounding boxes, which the Phase 1a read
+didn't record — a later improvement to `read_spines.py`.) Writes corrections back to `books.csv`. This is where the 12
 review-queue items and the lookup misses get cleared — the 4 unreadable ones
 by taking the book off the shelf.
 

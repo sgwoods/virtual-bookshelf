@@ -21,3 +21,6 @@ token.json
 .DS_Store
 .vscode/
 .idea/
+
+# Open Library / Google Books response cache (rebuildable)
+data/cache/
