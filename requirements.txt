@@ -1,0 +1,12 @@
+# Phase 1a (photo → catalogue). Only Pillow is needed today; ffmpeg must be on PATH.
+Pillow>=10.0
+
+# Optional: scripted photo download from Google Drive (see scripts/fetch_photos.py)
+# google-api-python-client
+# google-auth-oauthlib
+
+# Phase 1b (planned): resolve + browse
+# requests
+# fastapi
+# uvicorn
+# jinja2

@@ -1,0 +1,23 @@
+# Shelf photos live in Google Drive, not git (~250 MB). See scripts/fetch_photos.py
+photos/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Future: local database and downloaded covers
+*.sqlite
+*.sqlite3
+*.db
+covers/
+
+# Secrets
+.env
+credentials.json
+token.json
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
