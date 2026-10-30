@@ -24,3 +24,9 @@ token.json
 
 # Open Library / Google Books response cache (rebuildable)
 data/cache/
+
+# Built site (scripts/build_site.py → _site/, deployed by .github/workflows/pages.yml)
+_site/
+
+# Reading status / ratings / notes stay local until the owner approves publishing them
+data/reading.csv

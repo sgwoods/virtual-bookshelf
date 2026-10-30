@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bookshelf</title>
+<meta name="description" content="A cover-first view of my physical bookshelf.">
+<style>
+  :root {
+    --bg: #f6f5f1;
+    --ink: #1d1d1f;
+    --muted: #8a8a8e;
+    --line: #e4e2dc;
+    --chip: #ffffff;
+    --accent: #1d1d1f;
+    --progress: #ff9f0a;
+    --shadow: 0 1px 2px rgba(0,0,0,.08), 0 4px 10px rgba(0,0,0,.10);
+    --shadow-lift: 0 4px 8px rgba(0,0,0,.10), 0 16px 32px rgba(0,0,0,.18);
+    --radius: 4px;
+    --min-cover: 132px;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------- header + filter ---------- */
+  header {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 40px 24px 8px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  h1 {
+    margin: 0;
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+  .count { color: var(--muted); font-size: 14px; margin-top: 2px; }
+
+  .filters {
+    display: inline-flex;
+    padding: 3px;
+    background: var(--line);
+    border-radius: 9px;
+    gap: 2px;
+  }
+  .filters button {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--ink);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 6px 14px;
+    border-radius: 7px;
+    cursor: pointer;
+    transition: background .2s, box-shadow .2s;
+  }
+  .filters button[aria-pressed="true"] {
+    background: var(--chip);
+    box-shadow: 0 1px 3px rgba(0,0,0,.12);
+  }
+  .filters button:focus-visible { outline: 2px solid #0a84ff; outline-offset: 2px; }
+
+  /* ---------- grid ---------- */
+  main { max-width: 1280px; margin: 0 auto; padding: 24px 24px 64px; }
+  .grid {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(var(--min-cover), 1fr));
+    gap: 36px 28px;
+  }
+  .book { min-width: 0; }
+  .book a { color: inherit; text-decoration: none; display: block; }
+
+  .cover {
+    position: relative;
+    aspect-ratio: 2 / 3;
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: #ddd;
+    box-shadow: var(--shadow);
+    transform: translateY(0);
+    transition: transform .25s cubic-bezier(.2,.8,.2,1), box-shadow .25s cubic-bezier(.2,.8,.2,1);
+  }
+  /* subtle spine highlight, like a real paperback */
+  .cover::after {
+    content: "";
+    position: absolute; inset: 0;
+    background: linear-gradient(90deg, rgba(255,255,255,.18) 0, rgba(0,0,0,.06) 3%, transparent 7%);
+    pointer-events: none;
+  }
+  .book a:hover .cover,
+  .book a:focus-visible .cover {
+    transform: translateY(-6px);
+    box-shadow: var(--shadow-lift);
+  }
+  .book a:focus-visible { outline: none; }
+  .book a:focus-visible .cover { outline: 2px solid #0a84ff; outline-offset: 3px; }
+
+  .cover img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  /* fallback when a cover is missing or fails to load */
+  .placeholder {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; justify-content: space-between; overflow: hidden;
+    padding: 14px 12px;
+    gap: 8px;
+    color: rgba(255,255,255,.95);
+    font-weight: 600;
+    font-size: 14px;
+    line-height: 1.2;
+  }
+  .placeholder .ph-title { min-height: 0; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+  .placeholder .ph-foot { display: flex; flex-direction: column; gap: 6px; }
+  .placeholder small { font-weight: 400; font-size: 11px; opacity: .85; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .placeholder .missing {
+    align-self: flex-start;
+    font-style: normal; font-weight: 500; font-size: 9px; letter-spacing: .06em; text-transform: uppercase;
+    padding: 2px 5px; border: 1px solid rgba(255,255,255,.55); border-radius: 3px; opacity: .85; white-space: nowrap;
+  }
+  .copies { color: var(--muted); }
+
+  /* thin progress bar at the very bottom of the cover */
+  .progress {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    height: 3px;
+    background: rgba(0,0,0,.25);
+    z-index: 1;
+  }
+  .progress span {
+    display: block; height: 100%;
+    background: var(--progress);
+  }
+
+  /* minimal caption */
+  .meta { padding-top: 10px; }
+  .title, .author {
+    margin: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .title { font-size: 13px; font-weight: 500; }
+  .author { font-size: 12px; color: var(--muted); }
+  .pct { color: var(--progress); font-weight: 500; }
+
+  .crumb {
+    display: inline-block; margin-bottom: 6px;
+    font-size: 12px; font-weight: 500; letter-spacing: .02em;
+    color: var(--muted); text-decoration: none;
+  }
+  .crumb:hover { color: var(--ink); }
+  footer {
+    max-width: 1280px; margin: 0 auto; padding: 24px 24px 48px;
+    border-top: 1px solid var(--line);
+    color: var(--muted); font-size: 12px;
+  }
+  footer p { margin: 0 0 8px; max-width: 60ch; }
+  footer a { color: inherit; }
+  footer nav { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+  footer nav a { text-decoration: none; }
+  footer nav a:hover { color: var(--ink); text-decoration: underline; }
+  .empty {
+    color: var(--muted);
+    text-align: center;
+    padding: 64px 0;
+    display: none;
+  }
+
+  @media (max-width: 520px) {
+    :root { --min-cover: 96px; }
+    footer { padding: 20px 16px 40px; }
+    header { padding: 28px 16px 4px; }
+    main { padding: 20px 16px 48px; }
+    .grid { gap: 24px 16px; }
+    h1 { font-size: 24px; }
+    .filters { width: 100%; }
+    .filters button { flex: 1; padding: 6px 4px; font-size: 12px; white-space: nowrap; }
+    .placeholder { padding: 9px 8px; font-size: 11.5px; }
+    .placeholder .ph-title { -webkit-line-clamp: 5; }
+    .placeholder small { font-size: 10px; -webkit-line-clamp: 1; }
+    .placeholder .missing { font-size: 8px; letter-spacing: .04em; padding: 1px 4px; white-space: nowrap; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .cover { transition: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <a class="crumb" href="https://sgwoods.github.io/public/">Steven Woods Projects</a>
+    <h1>Bookshelf</h1>
+    <div class="count" id="count"></div>
+  </div>
+  <nav class="filters" aria-label="Filter books">
+    <button type="button" data-filter="all" aria-pressed="true">All</button>
+    <button type="button" data-filter="reading" aria-pressed="false">Currently Reading</button>
+    <button type="button" data-filter="read" aria-pressed="false">Finished</button>
+  </nav>
+</header>
+
+<main>
+  <ul class="grid" id="grid"></ul>
+  <p class="empty" id="empty">Nothing here yet — reading status isn't tracked for most books until Phase 2.</p>
+</main>
+
+<footer>
+  <p>A catalogue of my physical books, read from shelf photos and matched on
+    <a href="https://openlibrary.org/">Open Library</a>. Covers marked “Cover missing” are still to be found.</p>
+  <nav aria-label="Project">
+    <a href="https://sgwoods.github.io/public/virtual-bookshelf.html">Project page</a>
+    <a href="https://github.com/sgwoods/virtual-bookshelf">Source</a>
+    <a href="https://github.com/sgwoods/virtual-bookshelf/blob/main/docs/ARCHITECTURE.md">Architecture</a>
+    <a href="https://github.com/sgwoods/virtual-bookshelf/blob/main/docs/ROADMAP.md">Roadmap</a>
+    <a href="build.json" id="build">Built /*BUILT*/</a>
+  </nav>
+</footer>
+
+<script>
+/* ------------------------------------------------------------------
+   Data — generated by scripts/build_site.py from data/books.csv and
+   data/resolved.csv. Don't edit by hand; re-run the script.
+   Keys: t title · a author · c cover URL ("" = missing) · n copies ·
+         s status (unread | reading | read) · p progress 0-100
+------------------------------------------------------------------- */
+const books = /*BOOKS*/[];
+
+/* ------------------------------------------------------------------ */
+const grid = document.getElementById("grid");
+const empty = document.getElementById("empty");
+const count = document.getElementById("count");
+const buttons = document.querySelectorAll(".filters button");
+
+// Stable muted colour per title, for covers that are missing or fail to load.
+function tint(s) {
+  let h = 0;
+  for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360;
+  return `hsl(${h} 28% 38%)`;
+}
+
+function placeholder(book, note = "Cover missing") {
+  const div = document.createElement("div");
+  div.className = "placeholder";
+  div.style.background = tint(book.t);
+  div.innerHTML = '<span class="ph-title"></span><span class="ph-foot"><small class="ph-author"></small><em class="missing"></em></span>';
+  div.querySelector(".ph-title").textContent = book.t;
+  div.querySelector(".ph-author").textContent = book.a;
+  div.querySelector(".missing").textContent = note;
+  return div;
+}
+
+function card(book) {
+  const li = document.createElement("li");
+  li.className = "book";
+  li.dataset.status = book.s;
+
+  const a = document.createElement("a");
+  a.href = `https://openlibrary.org/search?q=${encodeURIComponent(book.t + " " + book.a)}`;
+  a.target = "_blank";
+  a.rel = "noopener";
+  a.setAttribute("aria-label", `${book.t} by ${book.a}${book.c ? "" : " (cover missing)"}`);
+
+  const cover = document.createElement("div");
+  cover.className = "cover";
+
+  if (book.c) {
+    const img = document.createElement("img");
+    img.src = book.c;
+    img.alt = "";
+    img.loading = "lazy";
+    img.decoding = "async";
+    // Open Library returns a 1×1 gif for unknown ids — treat that as missing too.
+    img.addEventListener("load", () => { if (img.naturalWidth < 10) img.replaceWith(placeholder(book)); });
+    // A known cover that can't be fetched right now (offline) — say so, rather than "missing".
+    img.addEventListener("error", () => img.replaceWith(placeholder(book, "Cover offline")));
+    cover.append(img);
+  } else {
+    cover.append(placeholder(book));
+  }
+
+  if (book.s === "reading") {
+    const pct = Math.max(0, Math.min(100, Number(book.p) || 0));
+    const bar = document.createElement("div");
+    bar.className = "progress";
+    bar.setAttribute("role", "progressbar");
+    bar.setAttribute("aria-valuenow", pct);
+    bar.setAttribute("aria-valuemin", 0);
+    bar.setAttribute("aria-valuemax", 100);
+    bar.innerHTML = `<span style="width:${pct}%"></span>`;
+    cover.append(bar);
+  }
+
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  const t = document.createElement("p");
+  t.className = "title";
+  t.textContent = book.t;
+  const au = document.createElement("p");
+  au.className = "author";
+  au.textContent = book.a;
+  if (book.n > 1) {
+    const cp = document.createElement("span");
+    cp.className = "copies";
+    cp.textContent = ` · ${book.n} copies`;
+    au.append(cp);
+  }
+  if (book.s === "reading") {
+    const pct = document.createElement("span");
+    pct.className = "pct";
+    pct.textContent = ` · ${book.p}%`;
+    au.append(pct);
+  }
+  meta.append(t, au);
+
+  a.append(cover, meta);
+  li.append(a);
+  return li;
+}
+
+function render(list) {
+  grid.replaceChildren(...list.map(card));
+  applyFilter(currentFilter());
+}
+
+function currentFilter() {
+  const on = document.querySelector('.filters button[aria-pressed="true"]');
+  return on ? on.dataset.filter : "all";
+}
+
+function applyFilter(filter) {
+  let shown = 0;
+  for (const li of grid.children) {
+    const match = filter === "all" || li.dataset.status === filter;
+    li.hidden = !match;
+    if (match) shown++;
+  }
+  empty.style.display = shown ? "none" : "block";
+  const label = { all: "titles", reading: "in progress", read: "finished" }[filter];
+  const missing = filter === "all" ? ` · ${books.filter(b => !b.c).length} covers missing` : "";
+  count.textContent = filter === "all"
+    ? `${books.reduce((n, b) => n + b.n, 0)} books · ${shown} ${label}${missing}`
+    : `${shown} ${label}`;
+}
+
+buttons.forEach(btn => btn.addEventListener("click", () => {
+  buttons.forEach(b => b.setAttribute("aria-pressed", String(b === btn)));
+  applyFilter(btn.dataset.filter);
+}));
+
+render(books);
+
+</script>
+</body>
+</html>

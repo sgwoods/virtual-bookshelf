@@ -1,0 +1,149 @@
+name: Pages
+
+# Tests on every pull request; on main, also publishes the cover grid to
+# https://sgwoods.github.io/virtual-bookshelf/ and tells the portfolio hub.
+# Same three-job shape as sgwoods/star-swarm's ci.yml, which the hub's
+# PROJECT-STATUS-CONTRACT.md names as the reference for observed projects.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push supersedes the run in flight: the later build is the one
+# that should reach the site.
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Tests and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Standard library only: nothing to install.
+      - name: Compile scripts
+        run: python3 -m py_compile scripts/*.py
+
+      - name: Unit tests (lookup scoring, site, docs accuracy)
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Build the site
+        run: python3 scripts/build_site.py --out _site
+
+      # build.json names the commit this bundle was built from. The hub
+      # (sgwoods/public, status_sync github-pages-build-v1) imports only a
+      # clean release identity whose commit exists in this repository.
+      - name: Write build identity
+        run: |
+          if [ -n "$(git status --porcelain --untracked-files=no)" ]; then dirty=true; else dirty=false; fi
+          python3 - "$dirty" <<'PY'
+          import json, os, sys, time
+          now = time.time()
+          json.dump({
+              "commit": os.environ["GITHUB_SHA"][:7],
+              "dirty": sys.argv[1] == "true",
+              "mode": "release" if os.environ["GITHUB_REF"] == "refs/heads/main" else "preview",
+              "builtAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
+              "builtAtMs": int(now * 1000),
+          }, open("_site/build.json", "w"))
+          PY
+          cat _site/build.json
+
+      # The bundle that is published is the one just tested — no second build.
+      - name: Package _site/ for Pages
+        if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: Publish to GitHub Pages
+    needs: check
+    if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  # Ask the portfolio hub (sgwoods/public) to re-read build.json now that it is
+  # live, instead of waiting for its daily run. Nothing here writes to the hub.
+  #
+  # PUBLIC_HUB_DISPATCH_TOKEN: fine-grained token owned by sgwoods, repository
+  # access sgwoods/public only, permission Actions read and write. The same
+  # token Star Swarm uses can be reused if its repository list allows it.
+  # Without the secret this job warns and succeeds; the deployment stays green.
+  notify-hub:
+    name: Ask the portfolio hub to re-read the build
+    needs: deploy
+    if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions: {}
+    steps:
+      - name: Wait for the build to be served, then dispatch the hub
+        env:
+          HUB_TOKEN: ${{ secrets.PUBLIC_HUB_DISPATCH_TOKEN }}
+          HUB_REPOSITORY: sgwoods/public
+          HUB_WORKFLOW: render-public-index.yml
+          PAGE_URL: ${{ needs.deploy.outputs.page_url }}
+        run: |
+          if [ -z "$HUB_TOKEN" ]; then
+            echo "::warning title=Portfolio hub not notified::Secret PUBLIC_HUB_DISPATCH_TOKEN is not set, so $HUB_REPOSITORY was not asked to re-read this build. The deployment succeeded; the hub's daily run will pick it up."
+            exit 0
+          fi
+
+          # The hub records whatever commit build.json names, so wait until the
+          # site serves this run's build before asking it to look.
+          identity_url="${PAGE_URL%/}/build.json"
+          served=""
+          for attempt in $(seq 1 30); do
+            served=$(curl --fail --silent --show-error --location --max-time 20 "$identity_url" \
+              | python3 -c 'import json, sys; print(json.load(sys.stdin).get("commit", ""))' 2>/dev/null || true)
+            if [ ${#served} -ge 7 ] && [ "${GITHUB_SHA#"$served"}" != "$GITHUB_SHA" ]; then
+              echo "$identity_url serves $served, which is this run's commit."
+              break
+            fi
+            echo "Attempt $attempt: $identity_url serves '${served:-nothing}', waiting for ${GITHUB_SHA::7}."
+            served=""
+            sleep 10
+          done
+          if [ -z "$served" ]; then
+            echo "::error title=Build not served::$identity_url never named ${GITHUB_SHA::7}, so the hub was not asked to look."
+            exit 1
+          fi
+
+          status=$(curl --silent --show-error --output response.json --write-out '%{http_code}' \
+            --request POST \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $HUB_TOKEN" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$HUB_REPOSITORY/actions/workflows/$HUB_WORKFLOW/dispatches" \
+            --data '{"ref":"main"}')
+          if [ "$status" != "204" ]; then
+            echo "::error title=Portfolio hub refused the request::HTTP $status. Check that PUBLIC_HUB_DISPATCH_TOKEN has not expired and has Actions read and write on $HUB_REPOSITORY."
+            cat response.json
+            exit 1
+          fi
+          echo "Asked $HUB_REPOSITORY to run $HUB_WORKFLOW against ${GITHUB_SHA::7}."
