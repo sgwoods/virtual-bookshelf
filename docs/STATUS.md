@@ -1,6 +1,84 @@
 # Status — 2026-10-30
 
-## Latest (Oct 30, afternoon)
+This is the dated log of work and results. What exists and how it works is in
+[ARCHITECTURE.md](ARCHITECTURE.md); what comes next is in [ROADMAP.md](ROADMAP.md).
+
+## Latest (Oct 30, evening)
+
+**Full Open Library lookup run** (MacBook, all 521 items):
+
+```
+matched 478 (92%) · weak 26 · none 11 · skipped 6 (4 unreadable spines, 2 theses)
+```
+
+- **Spot check:** 15 random `matched` rows were all the right work. Two had
+  wrong years (*Legacy* 1960, really 1995; *Hunchback* 1968, a reprint). The
+  lookup matches works, not editions, so editions were not checked.
+- **Why the 37 weak/none rows missed:**
+
+  | cause | n | handled by |
+  |---|---|---|
+  | series naming ("Star Trek - Ishmael" vs "Ishmael (Star Trek #23)") | 3 | resolve.py fix |
+  | notes in Open Library's title ("[32 essays]", "(Von Neuman)", "…By Philip K. Dick") | 6 | resolve.py fix |
+  | "Isaac Asimov's …" prefix on one side only | 1 | resolve.py fix |
+  | author listed only in Chinese/Cyrillic (刘慈欣, Лев Толстой) | 4 | resolve.py fix |
+  | long subtitle sinks the search (*Computers and Intractability*, *Redemption of Time*) | 2 | resolve.py fix (needs live run) |
+  | same title, different book ranked first (*Wake*, *Dark Forest*, *Three-Body Problem*, *Other Minds*, *Death's End*) | 5 | review |
+  | co-author / pen name / translation (*Sphereland*, *Tom Sawyer*, *Measure of Reality*) | 3 | review |
+  | series volumes (*Great SF Stories 5*, *Chinese Horoscopes: Snake*, *Semantics of Spec. Languages*) | 3 | review |
+  | small press, exhibition catalogue, magazine, comic | 6 | review — most aren't listed anywhere |
+  | CS monographs (incl. *Constraint-Based Design Recovery*) | 2 | review |
+  | spine misread / partly hidden (*Best of Trek 2*, *We Built This Vol 1*) | 2 | review |
+
+- **resolve.py scoring fix** (patterns above) plus a `--retry` flag that
+  re-scores only weak/none rows. Applied on the MacBook from the response
+  cache: **494 matched · 11 weak · 10 none · 6 skipped**, no existing match
+  lost (two more than the offline estimate: *The Dark Forest* and *Death's
+  End* now match Cixin Liu's series volumes). New requests — the main-title
+  retry and some Google Books fallbacks — could not be made from that session,
+  so those rows keep their earlier result; a networked `--retry` may lift a
+  few more.
+- **Years that look wrong** (Open Library `first_publish_year`; not fixable in
+  code — plan a manual year column with the SQLite step):
+  - impossible: *The Folk of the Fringe* 1777 (1989), *Letters to a Young Poet*
+    1656 (1929), *The Prestige* 1901 (1995), *Legacy* 1960 (1995)
+  - reprint years: *Children of the Lens* 2017, *Skylark Three* 2013,
+    *Childhood's End* 1995 (both copies), *Frankenstein* 2017, *Origin of
+    Species* 2013, *Don Quixote* 2015, *Flatland* 2018, *One Hundred Years of
+    Solitude* 2007, *Three Musketeers* 1933, *Hunchback* 1968, *Bicentennial
+    Man* 1999, *Otherland* 2021
+  - year or match suspect, re-check after review: *The God Delusion* 2001,
+    *Origin* (Brown) 2013, *The Rift* 1968, *Demons* 2000, *Dwellers in the
+    Crucible* 2000, *Space Odyssey* 2018
+- **Review:** not yet done. **32 cards** are queued (low-confidence spine
+  reads, weak/none lookups, skipped rows). Outcome to be recorded here.
+
+**Cover grid site** — `scripts/build_site.py` builds a single static page of
+every book: 521 items, 499 titles; titles without a confirmed cover show a
+titled "Cover missing" card. Reading status is not published:
+`data/reading.csv` is local and git-ignored until the owner approves what
+reading data goes public, so every book shows as unread.
+
+**Portfolio integration** — this repo follows the hub's observed-project
+contract (Star Swarm pattern: a deployed `build.json`, `docs/ARCHITECTURE.md`
+checked by tests, `docs/ROADMAP.md`). Hub-side registration is
+`sgwoods/public` PR #18, reviewed and merged there.
+
+**Where each piece stands**
+
+| | state |
+|---|---|
+| lookup run, scoring fix, `--retry` | done (numbers above) |
+| review of the 32 queued cards | not started |
+| cover-grid page, tests (`python3 -m unittest discover -s tests`, 12 tests) | built and passing locally; CI runs them on every push and PR |
+| deployment to GitHub Pages | by `.github/workflows/pages.yml` on push to `main`; needs repository Settings → Pages → Source set to **GitHub Actions**. The live commit is whatever `build.json` names |
+| hub notification | `notify-hub` job; needs the optional `PUBLIC_HUB_DISPATCH_TOKEN` secret, otherwise the hub's daily run picks the build up |
+| covers download, SQLite, search/detail pages, Phase 2 reading data | planned (ROADMAP) |
+
+**Next:** review (`python3 scripts/review.py`, then `python3 scripts/resolve.py`),
+commit `data/`, push.
+
+## Earlier (Oct 30, afternoon)
 
 - Repo created and pushed: github.com/sgwoods/virtual-bookshelf. Working
   copy on the MacBook at `~/Developer/virtual-bookshelf`.
@@ -10,11 +88,7 @@
   Blish and Log volumes). Watch-out: Open Library's `first_publish_year`
   is sometimes a reprint year (*Children of the Lens* → 2017, *Skylark
   Three* → 2013) — sanity-check years before relying on them.
-- **Next command:** `python3 scripts/resolve.py` (full run, ~10–15 min,
-  resumes from the trial), then `python3 scripts/review.py`, then
-  `python3 scripts/resolve.py` again to apply decisions, then commit `data/`.
-- `data/resolved.csv` from the trial exists on the MacBook but is not
-  committed yet — it will be after the full run + review.
+- Next was the full run — done the same day, see above.
 
 ## Summary
 
@@ -24,8 +98,8 @@ taken on Oct 27–28, read on Oct 28, and the result is `data/books.csv`:
 confidence.** The earlier estimate of 600–900 titles was high; the stacks are
 shallower than the first two sample photos suggested.
 
-Nothing has been built on top of the CSV yet — no database, no metadata
-lookups, no covers, no web view.
+(At the end of Phase 1a nothing was built on the CSV yet; Phase 1b since added
+the lookup, review page and cover grid — see Latest.)
 
 ## What was done, in order
 

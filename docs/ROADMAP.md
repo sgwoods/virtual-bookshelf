@@ -3,10 +3,12 @@
 The full plan is the Claude Doc "Virtual Bookshelf — Plan"
 (https://claude.ai/artifact/AhsbdwHeufjhoLcPi5zvsy). This file tracks the
 working version: what's done, what's next, and what Phase 1a taught us.
+What exists today is described in [ARCHITECTURE.md](ARCHITECTURE.md); dated
+results are in [STATUS.md](STATUS.md).
 
 ```
 Phase 1a  photos → books.csv                      ✅ done (Oct 28)
-Phase 1b  resolve → SQLite → browsable catalogue  🔨 in progress (steps 1–2 built)
+Phase 1b  resolve → SQLite → browsable catalogue  🔨 in progress (lookup run; review next; cover grid built)
 Phase 2   lists, tags, notes, reading status
 Phase 3a  quotes and topics across books
 Phase 3b  discovery: gaps, adjacent authors, what to buy
@@ -19,7 +21,11 @@ Phase 2.** A catalogue with wrong books in it poisons everything downstream.
 
 ## Phase 1b — next steps, in order
 
-### 1. Resolve against Open Library  ✅ built — `scripts/resolve.py`, awaiting first live run
+### 1. Resolve against Open Library  ✅ done — full run Oct 30: 478 matched, 26 weak, 11 none, 6 skipped
+Scoring fix the same day (series naming, title notes, franchise prefixes,
+non-Latin author names, long subtitles) plus `--retry`: 494 matched, 11 weak,
+10 none, 6 skipped. Details in STATUS.md.
+
 `scripts/resolve.py`: for each row in `books.csv`, query the Open Library
 search API (`/search.json?title=…&author=…`), pick the best work match, and
 record `ol_work_id`, `first_publish_year`, `subjects`, `isbn` candidates and a
@@ -35,7 +41,7 @@ real test. Expect most of the
 classic SF to match cleanly; the likely misses are the CS monographs, the
 theses, the exhibition catalogues and the Coteau/Red Deer small-press books.
 
-### 2. Review page  ✅ built — `scripts/review.py`
+### 2. Review page  ✅ built — `scripts/review.py` · review not yet done (32 cards queued)
 A single local page listing every row that is (a) below high confidence from
 the spine read, or (b) a weak/no Open Library match. Each row shows the
 spine read, a link to its shelf photo, and up to four candidates with covers;
@@ -45,10 +51,24 @@ didn't record — a later improvement to `read_spines.py`.) Writes corrections b
 review-queue items and the lookup misses get cleared — the 4 unreadable ones
 by taking the book off the shelf.
 
+### 2b. Public cover grid  ✅ built — `scripts/build_site.py`, deployed by `.github/workflows/pages.yml`
+A static, self-contained page of every book — covers where confirmed, a titled
+"Cover missing" card otherwise, All / Reading / Finished filters — tested in CI
+and deployed by the workflow to https://sgwoods.github.io/virtual-bookshelf/
+with a `build.json`, for the portfolio at https://sgwoods.github.io/public/
+(Star Swarm's observed-project contract). This brings forward the cover-grid
+part of step 5; search, facets and detail pages remain in step 5. Reading
+status stays local until the open decision below is made.
+
+**Still to do:** hub registration is `sgwoods/public` PR #18 (merged by the
+hub maintainer); the optional `PUBLIC_HUB_DISPATCH_TOKEN` secret here for
+immediate hub refreshes.
+
 ### 3. Covers  *(minutes, automated)*
 Download covers from `covers.openlibrary.org/b/id/{cover_id}-L.jpg` into
 `covers/` (git-ignored). For misses, crop the book's front from a photo
-later, or leave a generated spine-colour placeholder.
+later. The site already shows a titled "Cover missing" placeholder for every
+title without a confirmed cover; those are the work list.
 
 ### 4. SQLite schema
 Move from CSV to `bookshelf.sqlite`:
@@ -61,9 +81,11 @@ Move from CSV to `bookshelf.sqlite`:
 can edit the database directly.
 
 ### 5. Browse UI  *(the "store" view)*
-FastAPI + Jinja + HTMX, served locally on the iMac. Cover grid, filter by
-author / subject / shelf / decade, a book detail page, and search. Reachable
-from the phone over Tailscale. This is the Phase 1 finish line.
+The cover grid exists as a static page (step 2b). Still to add: search,
+filter by author / subject / shelf / decade, and a book detail page. Static
+(generated from SQLite into JSON) is the default now that the public grid is
+on GitHub Pages; FastAPI + HTMX stays an option for anything that must write
+back. This is the Phase 1 finish line.
 
 ---
 
@@ -116,8 +138,9 @@ Ollama) + sqlite-vec for "books about X" and "where did I read Y".
 |---|---|---|
 | Vision model for future reads | Claude API · local Qwen-VL | API for accuracy; test local |
 | Shelf location naming | photo ID · room/case/shelf codes · free text | room/case/shelf, set during review |
-| Hosting | local + Tailscale · small cloud VM | local + Tailscale |
+| Hosting | local + Tailscale · small cloud VM · GitHub Pages | **decided Oct 30:** public cover grid on GitHub Pages; lookup/review tools stay local |
 | Highlights source | Kindle · Readwise · none | ask: does a Readwise/Kindle export exist? |
 | Barcode intake for new books | yes · later | later, after Phase 1b |
 | External sync | Goodreads · LibraryThing · none | none until Phase 2 |
-| Repo visibility | public · private | — |
+| Repo visibility | public · private | **decided Oct 30:** public, as part of the portfolio hub |
+| What reading data is public | all · status only · none | none for now: `data/reading.csv` is git-ignored; decide before Phase 2 |

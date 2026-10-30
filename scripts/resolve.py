@@ -56,6 +56,7 @@ def norm(s: str) -> str:
 
 def clean_title(t: str) -> str:
     t = re.sub(r"\s*\([^)]*\)", "", t)            # drop "(Star Trek #57)", "(2nd ed.)"
+    t = re.sub(r"\s*\[[^\]]*\]", "", t)          # drop "[32 essays]"
     t = t.replace("…", "").replace("...", "")
     return t.strip(" :-—")
 
@@ -73,14 +74,29 @@ def surname(a: str) -> str:
     return norm(parts[-1]) if parts else ""
 
 
+# franchise prefixes that one side has and the other often doesn't
+BRAND = re.compile(r"^(isaac asimov s|isaac asimov presents|douglas adams s)\s+")
+
+
 def score(want_title: str, want_author: str, got_title: str, got_authors: list[str]) -> float:
-    a_raw, b_raw = clean_title(want_title), got_title or ""
+    """Best of: candidate title as listed, and with its (…)/[…] notes and "by <author>" removed."""
+    sn = surname(want_author)
+    got = got_title or ""
+    trimmed = clean_title(got)
+    if sn:                                         # "Paycheck … Stories By Philip K. Dick"
+        trimmed = re.sub(r"\s+by\s+[^:]*\b%s\b.*$" % re.escape(sn), "", trimmed, flags=re.I)
+    return max(_score(want_title, sn, b, got_authors) for b in {got, trimmed})
+
+
+def _score(want_title: str, sn: str, got_title: str, got_authors: list[str]) -> float:
+    a_raw, b_raw = clean_title(want_title), got_title
     if not norm(a_raw) or not norm(b_raw):
         return 0.0
 
     def parts(s):                                  # full title, main title, subtitle
-        bits = [s] + [p for p in re.split(r"\s*:\s*", s, maxsplit=1) if p != s]
-        return [norm(x) for x in bits if norm(x)]
+        bits = [s] + [p for p in re.split(r"\s*:\s*|\s+[-–—]\s+", s, maxsplit=1) if p != s]
+        out = [norm(x) for x in bits if norm(x)]
+        return out + [BRAND.sub("", x) for x in out if BRAND.match(x)]
 
     ratio = lambda x, y: difflib.SequenceMatcher(None, x, y).ratio()
     t = ratio(norm(a_raw), norm(b_raw))
@@ -90,11 +106,14 @@ def score(want_title: str, want_author: str, got_title: str, got_authors: list[s
         for y in parts(b_raw):
             if (x, y) != (norm(a_raw), norm(b_raw)) and len(min(x, y, key=len)) >= 4:
                 t = max(t, 0.95 * ratio(x, y))
-    sn = surname(want_author)
     if not sn:
         au = 0.5                                   # no author to check: neutral
+    elif any(sn in norm(x).split() for x in got_authors or []):
+        au = 1.0
+    elif any(x.strip() and not norm(x) for x in got_authors or []):
+        au = 0.5                                   # author listed only in non-Latin script (刘慈欣, Лев Толстой)
     else:
-        au = 1.0 if any(sn in norm(x).split() for x in got_authors or []) else 0.0
+        au = 0.0
     s = 0.7 * t + 0.3 * au
     if t < 0.85:                    # an extra/missing word is a different book until a human says so
         s = min(s, MATCH - 0.01)
@@ -165,6 +184,9 @@ def resolve(row: dict) -> dict:
         attempts.append(("ol title+author", dict(title=ct, author=fa)))
     attempts.append(("ol q", dict(q=f"{ct} {sn}".strip())))
     attempts.append(("ol title", dict(title=ct)))
+    main = ct.split(":")[0].strip()
+    if main != ct and len(main) >= 4:              # long subtitles can sink an OL title search
+        attempts.append(("ol main title+author", dict(title=main, author=fa) if fa else dict(title=main)))
 
     cands, used = [], ""
     for label, params in attempts:
@@ -257,6 +279,7 @@ def main():
     ap.add_argument("--limit", type=int)
     ap.add_argument("--photo")
     ap.add_argument("--refresh", action="store_true", help="recompute all rows (cache still used)")
+    ap.add_argument("--retry", action="store_true", help="recompute weak/none rows only (cache still used)")
     a = ap.parse_args()
 
     rows = [r for r in csv.DictReader(open(BOOKS, encoding="utf-8")) if r["position"] != "0"]
@@ -274,7 +297,8 @@ def main():
     for i, row in enumerate(rows, 1):
         rid = row_id(row)
         prev = done.get(rid)
-        if prev and prev["title"] == row["title"] and prev["author"] == row["author"]:
+        retry = a.retry and prev and prev["status"] in ("weak", "none")
+        if prev and not retry and prev["title"] == row["title"] and prev["author"] == row["author"]:
             rec = prev                                         # unchanged since last run
         elif SKIP_TITLE.match(row["title"]):
             rec = {**{k: "" for k in OUT_FIELDS}, **base(row), "status": "skipped", "score": 0}
