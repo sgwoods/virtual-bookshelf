@@ -1,5 +1,21 @@
 # Status — 2026-10-30
 
+## Latest (Oct 30, afternoon)
+
+- Repo created and pushed: github.com/sgwoods/virtual-bookshelf. Working
+  copy on the MacBook at `~/Developer/virtual-bookshelf`.
+- Phase 1b steps 1–2 built: `scripts/resolve.py` (Open Library lookup,
+  Google Books fallback) and `scripts/review.py` (local review page).
+- **20-book live trial: 20/20 matched** (Gor, Lensman/Skylark, Star Trek
+  Blish and Log volumes). Watch-out: Open Library's `first_publish_year`
+  is sometimes a reprint year (*Children of the Lens* → 2017, *Skylark
+  Three* → 2013) — sanity-check years before relying on them.
+- **Next command:** `python3 scripts/resolve.py` (full run, ~10–15 min,
+  resumes from the trial), then `python3 scripts/review.py`, then
+  `python3 scripts/resolve.py` again to apply decisions, then commit `data/`.
+- `data/resolved.csv` from the trial exists on the MacBook but is not
+  committed yet — it will be after the full run + review.
+
 ## Summary
 
 Phase 1a (photo → first-pass catalogue) is complete. 31 shelf photos were

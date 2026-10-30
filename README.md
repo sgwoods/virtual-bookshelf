@@ -5,13 +5,14 @@ the shelves. Starts as a store-style library view (covers, author, details);
 grows into reading lists, cross-book quote and topic search, and a way to find
 the next book to read or buy.
 
-Runs locally on the iMac with open-source tools. Nothing leaves the machine
+Runs locally on a Mac (MacBook or iMac — either works) with open-source tools. Nothing leaves the machine
 except lookups to public book-metadata APIs.
 
 **Where things stand:** Phase 1a is done — the spines have been read and
-`data/books.csv` holds a first-pass catalogue of 521 items. Phase 1b has
-started: the Open Library lookup and the review page are built and waiting
-for their first real run (see "Running the lookup and review" below). See
+`data/books.csv` holds a first-pass catalogue of 521 items. Phase 1b is
+under way: the Open Library lookup and review page are built, and a 20-book
+trial matched 20 of 20 on Oct 30. Next is the full lookup run, then review
+(see "Running the lookup and review" below). See
 [docs/STATUS.md](docs/STATUS.md) for the numbers and
 [docs/ROADMAP.md](docs/ROADMAP.md) for what comes next.
 
@@ -70,7 +71,7 @@ Needs only the Python 3 that ships with macOS — no installs.
 ```bash
 cd ~/Developer/virtual-bookshelf
 git pull
-python3 scripts/resolve.py --limit 20     # 20-book trial, ~30 s — eyeball the ✓/~/✗ column
+python3 scripts/resolve.py --limit 20     # 20-book trial, ~30 s (done Oct 30: 20/20 matched)
 python3 scripts/resolve.py                # the rest, ~10–15 min at 1 req/s (resumes if stopped)
 python3 scripts/review.py                 # opens the review page in your browser
 python3 scripts/resolve.py                # folds your decisions in (instant, all cached)
