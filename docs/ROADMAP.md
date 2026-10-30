@@ -70,22 +70,50 @@ Download covers from `covers.openlibrary.org/b/id/{cover_id}-L.jpg` into
 later. The site already shows a titled "Cover missing" placeholder for every
 title without a confirmed cover; those are the work list.
 
-### 4. SQLite schema
-Move from CSV to `bookshelf.sqlite`:
-- `works` — one per title (Open Library work), with subjects, year, description
-- `copies` — one per physical book: work_id, location, format, publisher, condition, notes
+### 4. Book metadata in the project database
+Move from CSV to `bookshelf.sqlite`, and make it the one place book metadata
+lives — the site is generated from it, never from the CSVs directly:
+- `works` — one per title (Open Library work): title, subtitle, first year,
+  description, subjects, page count, cover id, plus **manual overrides** that
+  always win (year — see STATUS for the known reprint years — title, category)
+- `copies` — one per physical book: work_id, shelf location, format,
+  publisher, edition/ISBN, condition, notes
 - `authors`, `work_authors`
+- `categories` — a short curated list of major categories (see open
+  decisions), each work in one primary category plus optional extras
 - FTS5 index over title/author/subjects/notes
 
-`books.csv` stays as the human-editable import source until the review page
-can edit the database directly.
+Enrichment pass: fetch the Open Library work and edition records for every
+matched/confirmed book (description, subjects, page count, publisher), cached
+like the lookup. `books.csv` stays the human-editable import source until the
+review page can edit the database directly. The build step exports a
+`books.json` from the database for the site.
 
-### 5. Browse UI  *(the "store" view)*
-The cover grid exists as a static page (step 2b). Still to add: search,
-filter by author / subject / shelf / decade, and a book detail page. Static
-(generated from SQLite into JSON) is the default now that the public grid is
-on GitHub Pages; FastAPI + HTMX stays an option for anything that must write
-back. This is the Phase 1 finish line.
+### 5. Browse UI — one page, three views, one book focus
+Requirements (Oct 30): everything on the same page, switching views without
+losing your place, and every view able to open a book in place.
+
+- **Covers view** — the current grid (step 2b).
+- **Search view** — a search box over title, author, subject and notes, with
+  facets and sort on the major categories: category, author, decade, subject,
+  shelf location, format (and reading status, once Phase 2 decides what is
+  public). Results as a dense list/table.
+- **Shelf view** — the books drawn as spines in their real shelf order (from
+  the shelf location), grouped by case and shelf. Hover shows title and
+  author; click opens the book. Spines are generated (colour from the cover
+  or category, width from page count, vertical title text) unless the open
+  decision on photo crops says otherwise.
+- **Book focus** — an in-page panel or overlay, not a jump to Open Library:
+  cover, full metadata from the database, all copies and where each sits on
+  the shelf, subjects as links back into Search, and the Open Library link.
+  Deep-linkable (`#book/<id>`), and the URL also carries the current view,
+  query, filters and sort, so any state can be bookmarked or shared.
+
+Stays a static site on GitHub Pages: the database is exported to JSON at build
+time and the page does search, sort and filtering in the browser (≈500 titles
+is small). Order of work: database + enrichment (step 4) → view switcher and
+book focus over the existing data → search, facets and sort → shelf view.
+This is the Phase 1 finish line.
 
 ---
 
@@ -144,3 +172,5 @@ Ollama) + sqlite-vec for "books about X" and "where did I read Y".
 | External sync | Goodreads · LibraryThing · none | none until Phase 2 |
 | Repo visibility | public · private | **decided Oct 30:** public, as part of the portfolio hub |
 | What reading data is public | all · status only · none | none for now: `data/reading.csv` is git-ignored; decide before Phase 2 |
+| Major categories for search and sort | Open Library subjects as-is · curated list · both | curated list seeded from how the shelves are already grouped (SF by author, Sherlock Holmes, Harry Potter, politics, science/philosophy/AI, CS theory and theses, classics, recent reads), with Open Library subjects as secondary facets |
+| Spine images in the shelf view | generated spines · crops from the shelf photos | generated first; photo crops need per-spine bounding boxes and would publish parts of the (currently private) shelf photos |
