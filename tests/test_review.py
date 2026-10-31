@@ -38,6 +38,27 @@ class QuickChecks(unittest.TestCase):
                                             {"status": "matched", "match_title": "Serenity"}))
 
 
+class AutoFind(unittest.TestCase):
+    b = {"title": "Wake", "author": "Robert J. Sawyer"}
+
+    def test_weak_and_none_look_further_on_their_own(self):
+        self.assertTrue(review.auto_find(self.b, {"status": "weak"}, None))
+        self.assertTrue(review.auto_find(self.b, {"status": "none"}, None))
+
+    def test_not_when_decided_matched_quick_check_or_unreadable(self):
+        self.assertFalse(review.auto_find(self.b, {"status": "weak"}, {"decision": "pick"}))
+        self.assertFalse(review.auto_find(self.b, {"status": "matched"}, None))
+        self.assertFalse(review.auto_find(self.b, {"status": "matched"}, None, check=True))
+        self.assertFalse(review.auto_find({"title": "unknown (worn black spine)", "author": "?"},
+                                          {"status": "none"}, None))
+
+
+class ImageSearch(unittest.TestCase):
+    def test_link_searches_title_and_first_author(self):
+        url = review.image_search_url({"title": "The Best of Trek 2", "author": "Walter Irwin and G. B. Love (eds.)"})
+        self.assertEqual(url, "https://www.google.com/search?udm=2&q=The+Best+of+Trek+2+Walter+Irwin")
+
+
 class PageScript(unittest.TestCase):
     @unittest.skipUnless(shutil.which("node"), "node not installed")
     def test_script_parses(self):

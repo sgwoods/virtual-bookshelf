@@ -148,8 +148,12 @@ def get_json(url: str) -> dict:
     return data
 
 
-def ol_search(**params) -> list[dict]:
-    params = {"limit": 8, **params, "fields": OL_FIELDS}
+def ol_search(fields: str = OL_FIELDS, **params) -> list[dict]:
+    # Parameter order is part of the cache key (data/cache/ is keyed on the URL):
+    # query terms, then limit, then fields — as every earlier run wrote them.
+    params = dict(params)
+    params.setdefault("limit", 8)
+    params["fields"] = fields
     url = "https://openlibrary.org/search.json?" + urllib.parse.urlencode(params)
     return get_json(url).get("docs", [])
 
@@ -169,6 +173,7 @@ def gb_search(title: str, author: str, q: str = "", n: int = 5) -> list[dict]:
             "isbn": [i["identifier"] for i in v.get("industryIdentifiers", [])
                      if i.get("type", "").startswith("ISBN")],
             "subject": v.get("categories", []),
+            "publisher": v.get("publisher", ""),
             "cover_url": (v.get("imageLinks") or {}).get("thumbnail", "").replace("http://", "https://"),
         })
     return out
@@ -224,7 +229,12 @@ def alt(c: dict) -> dict:
     return {"source": c["source"], "work_id": c.get("key", ""), "gb_id": c.get("gb_id", ""),
             "title": c.get("title", ""), "author": ", ".join(c.get("author_name", [])[:3]),
             "year": c.get("first_publish_year", ""), "cover_url": cover_url(c),
-            "isbn": ((c.get("isbn") or [""])[0]), "score": c["_score"]}
+            "isbn": ((c.get("isbn") or [""])[0]), "publisher": first(c.get("publisher")),
+            "score": c["_score"]}
+
+
+def first(v) -> str:
+    return (v[0] if v else "") if isinstance(v, list) else (v or "")
 
 
 def search_more(row: dict, q: str = "", isbn: str = "", n: int = 12) -> list[dict]:
@@ -250,7 +260,7 @@ def search_more(row: dict, q: str = "", isbn: str = "", n: int = 12) -> list[dic
         gb_queries.append(f"{ct} {fa}".strip())
     cands = []
     for params in ol_queries:
-        for d in ol_search(**params):
+        for d in ol_search(fields=OL_FIELDS + ",publisher", **params):
             d["source"] = "openlibrary"
             cands.append(d)
     for gq in gb_queries:
