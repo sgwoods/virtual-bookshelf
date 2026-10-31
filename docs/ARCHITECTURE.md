@@ -172,13 +172,21 @@ decisions and whether any data is not yet pushed, and buttons for the steps in
 
 | button | step | what it does |
 |---|---|---|
-| Get latest | `update` | switch to `main` and fast-forward from GitHub; refuses while review data is unpublished |
+| Get latest | `update_code` | fetch GitHub's `main` and bring it in — fast-forward on `main`; on a review branch, back to `main` if nothing is unpublished, otherwise merge `main` into it so the data stays — then restart the page |
 | Retry lookups | `retry` | `resolve.py --retry` (uses the network) |
 | Apply decisions | `apply` | `resolve.py`: fold `data/overrides.csv` into `data/resolved.csv` |
 | Rebuild site | `build` | `build_site.py`, then opens the preview at `/site/` |
 | Run tests | `test` | the unit tests |
 | Save & push | `save` | apply, then commit the data files on a `review-YYYYMMDD-HHMM` branch (never `main`) and push it; the log links to the pull request |
 | Finish | `finish` | apply → build → test → push, stopping at the first failure, then preview |
+
+**New versions.** The page checks GitHub every few minutes and whenever its
+tab regains focus (`/version`). When `main` has commits this checkout lacks, a
+banner offers **Update & restart** (the Get latest step); when newer code is
+already on disk than the running process, it offers **Restart**. Restarting
+replaces the process with a fresh one in the same Terminal window and port
+(`os.execv`, without opening another tab), and the page reloads itself once
+the new process answers. A **Restart** button is always in the bar.
 
 The same steps run from Terminal: `python3 scripts/pipeline.py finish` (or
 `status`, `update`, `retry`, `apply`, `build`, `test`, `publish`, `save`).

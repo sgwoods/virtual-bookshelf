@@ -78,6 +78,51 @@ class Publish(unittest.TestCase):
         changed = sorted(sh(self.work, "git", "show", "--name-only", "--format=", "HEAD").split())
         self.assertEqual(changed, ["data/images.csv", "site_images/IMG_1__shelf__1/cover.jpg"])
 
+    def advance_origin(self, name="new.txt"):
+        """Someone (me, via a merged PR) pushes a new commit to GitHub's main."""
+        other = self.tmp / "other"
+        if not other.exists():
+            sh(self.tmp, "git", "clone", "-q", str(self.tmp / "origin.git"), str(other))
+            for k, v in (("user.name", "Other"), ("user.email", "o@example.com"), ("commit.gpgsign", "false")):
+                sh(other, "git", "config", k, v)
+        sh(other, "git", "pull", "-q")
+        (other / name).write_text("new version\n")
+        sh(other, "git", "add", name)
+        sh(other, "git", "commit", "-q", "-m", "new version")
+        sh(other, "git", "push", "-q")
+
+    def test_behind_counts_new_commits_on_github(self):
+        self.assertEqual(pipeline.behind(), 0)
+        self.advance_origin()
+        self.assertEqual(pipeline.behind(), 1)
+
+    def test_update_code_on_main_with_unpublished_data(self):
+        (self.work / "data/resolved.csv").write_text("a,b\n7,7\n")
+        self.advance_origin()
+        self.assertTrue(pipeline.update_code(self.log.append))
+        self.assertTrue((self.work / "new.txt").exists())
+        self.assertEqual((self.work / "data/resolved.csv").read_text(), "a,b\n7,7\n", "review data untouched")
+        self.assertEqual(pipeline.behind(), 0)
+
+    def test_update_code_on_review_branch_keeps_unpublished_data_there(self):
+        (self.work / "data/resolved.csv").write_text("a,b\n1,3\n")
+        pipeline.publish(self.log.append, "review")
+        br = pipeline.branch()
+        (self.work / "data/overrides.csv").write_text("row_id,decision\nx,accept\ny,accept\n")
+        self.advance_origin()
+        self.assertTrue(pipeline.update_code(self.log.append))
+        self.assertEqual(pipeline.branch(), br)
+        self.assertTrue((self.work / "new.txt").exists())
+        self.assertIn("y,accept", (self.work / "data/overrides.csv").read_text())
+
+    def test_update_code_returns_to_main_when_nothing_is_unpublished(self):
+        (self.work / "data/resolved.csv").write_text("a,b\n1,3\n")
+        pipeline.publish(self.log.append, "review")
+        self.advance_origin()
+        self.assertTrue(pipeline.update_code(self.log.append))
+        self.assertEqual(pipeline.branch(), "main")
+        self.assertTrue((self.work / "new.txt").exists())
+
     def test_update_refuses_over_unpublished_data(self):
         (self.work / "data/resolved.csv").write_text("a,b\n9,9\n")
         self.assertFalse(pipeline.update(self.log.append))

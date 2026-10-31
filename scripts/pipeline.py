@@ -102,6 +102,33 @@ def update(log: Log) -> bool:
     return run(["git", "pull", "--ff-only"], log)
 
 
+def behind() -> int:
+    """How many commits GitHub's main has that this checkout does not (fetches first).
+    -1 if GitHub could not be reached."""
+    r = subprocess.run(["git", "fetch", "-q", "origin", "main"], cwd=ROOT, capture_output=True, text=True)
+    if r.returncode != 0:
+        return -1
+    n = git("rev-list", "--count", "HEAD..origin/main")
+    return int(n) if n.isdigit() else -1
+
+
+def update_code(log: Log) -> bool:
+    """Bring in the newest version from GitHub without disturbing review work.
+
+    On main: fast-forward. On a review branch with nothing unpublished: back to
+    main and fast-forward. On a review branch with unpublished data: merge main
+    into it, so the data stays where it is."""
+    if not run(["git", "fetch", "origin", "main"], log):
+        return False
+    br = branch()
+    if br == "main":
+        return run(["git", "merge", "--ff-only", "origin/main"], log)
+    if not data_changes():
+        return run(["git", "switch", "main"], log) and run(["git", "merge", "--ff-only", "origin/main"], log)
+    log(f"Keeping your unpublished review data on '{br}' and bringing the new version into it.")
+    return run(["git", "merge", "--no-edit", "origin/main"], log)
+
+
 def retry(log: Log) -> bool:
     return run([PY, "scripts/resolve.py", "--retry"], log)
 
@@ -181,6 +208,7 @@ def save(log: Log) -> bool:
 
 
 STEPS["finish"] = finish
+STEPS["update_code"] = update_code
 STEPS["save"] = save
 
 

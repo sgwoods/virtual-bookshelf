@@ -84,8 +84,10 @@ cd ~/Developer/virtual-bookshelf
 python3 scripts/review.py
 ```
 
-That opens the review page. Work through the cards, then use the buttons along
-the top: **Get latest** (pull from GitHub), **Retry lookups**, **Apply
+That opens the review page — the last Terminal command you need: when a new
+version is on GitHub the page shows a banner, and **Update & restart** brings
+it in and reloads. Work through the cards, then use the buttons along the
+top: **Get latest** (the same update, then restart), **Retry lookups**, **Apply
 decisions**, **Rebuild site** (opens a preview), **Run tests**, **Save & push**
 (commits the data on a review branch and pushes it), or **Finish** — apply,
 rebuild, test and push in one go. The log at the bottom ends with the link to
