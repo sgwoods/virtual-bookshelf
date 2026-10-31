@@ -149,14 +149,14 @@ def get_json(url: str) -> dict:
 
 
 def ol_search(**params) -> list[dict]:
-    params.update(limit=8, fields=OL_FIELDS)
+    params = {"limit": 8, **params, "fields": OL_FIELDS}
     url = "https://openlibrary.org/search.json?" + urllib.parse.urlencode(params)
     return get_json(url).get("docs", [])
 
 
-def gb_search(title: str, author: str) -> list[dict]:
-    q = f'intitle:"{title}"' + (f' inauthor:"{author}"' if author else "")
-    url = ("https://www.googleapis.com/books/v1/volumes?maxResults=5&printType=books&q="
+def gb_search(title: str, author: str, q: str = "", n: int = 5) -> list[dict]:
+    q = q or (f'intitle:"{title}"' + (f' inauthor:"{author}"' if author else ""))
+    url = (f"https://www.googleapis.com/books/v1/volumes?maxResults={n}&printType=books&q="
            + urllib.parse.quote(q))
     out = []
     for it in get_json(url).get("items", []):
@@ -219,14 +219,57 @@ def cover_url(c: dict) -> str:
     return c.get("cover_url", "")
 
 
+def alt(c: dict) -> dict:
+    """A candidate as the review page shows it (and as a 'pick' records it)."""
+    return {"source": c["source"], "work_id": c.get("key", ""), "gb_id": c.get("gb_id", ""),
+            "title": c.get("title", ""), "author": ", ".join(c.get("author_name", [])[:3]),
+            "year": c.get("first_publish_year", ""), "cover_url": cover_url(c),
+            "isbn": ((c.get("isbn") or [""])[0]), "score": c["_score"]}
+
+
+def search_more(row: dict, q: str = "", isbn: str = "", n: int = 12) -> list[dict]:
+    """'Search harder' on the review page: wider queries, or a person's own text or ISBN.
+
+    With an ISBN, look it up directly on Open Library and Google Books — the
+    surest way to find a book in hand. With free text, search for exactly that.
+    Otherwise try the combinations the main run doesn't, with more results each.
+    Every candidate is scored against the spine read, best first."""
+    title, author = row["title"], row["author"]
+    ct, fa, sn = clean_title(title), first_author(author), surname(author)
+    isbn = re.sub(r"[^0-9Xx]", "", isbn or "")
+    ol_queries, gb_queries = [], []
+    if isbn:
+        ol_queries.append(dict(q=f"isbn:{isbn}"))
+        gb_queries.append(f"isbn:{isbn}")
+    elif q.strip():
+        ol_queries.append(dict(q=q.strip(), limit=20))
+        gb_queries.append(q.strip())
+    else:
+        ol_queries += [dict(q=f"{ct} {fa}".strip(), limit=20), dict(title=ct, author=sn, limit=20),
+                       dict(q=ct, limit=20)]
+        gb_queries.append(f"{ct} {fa}".strip())
+    cands = []
+    for params in ol_queries:
+        for d in ol_search(**params):
+            d["source"] = "openlibrary"
+            cands.append(d)
+    for gq in gb_queries:
+        cands += gb_search(ct, fa, q=gq, n=10)
+    for d in cands:
+        d["_score"] = score(title, author, d.get("title", ""), d.get("author_name", []))
+    seen, out = set(), []
+    for c in sorted(cands, key=lambda c: (-c["_score"], -(c.get("edition_count") or 0))):
+        k = (c["source"], c.get("key") or c.get("gb_id") or c.get("title"))
+        if k not in seen:
+            seen.add(k); out.append(alt(c))
+    return out[:n]
+
+
 def pack(row: dict, cands: list[dict], used: str) -> dict:
     best = cands[0] if cands else {}
     s = best.get("_score", 0.0)
     status = "matched" if s >= MATCH else "weak" if s >= WEAK else "none"
-    alts = [{"source": c["source"], "work_id": c.get("key", ""), "gb_id": c.get("gb_id", ""),
-             "title": c.get("title", ""), "author": ", ".join(c.get("author_name", [])[:3]),
-             "year": c.get("first_publish_year", ""), "cover_url": cover_url(c),
-             "score": c["_score"]} for c in cands[:4]]
+    alts = [alt(c) for c in cands[:4]]
     return {
         **base(row), "status": status, "score": s, "source": best.get("source", ""), "query": used,
         "work_id": best.get("key", ""), "match_title": best.get("title", ""),
@@ -254,14 +297,18 @@ def apply_override(rec: dict, ov: dict) -> dict:
     d = ov.get("decision", "")
     if d == "accept":
         rec["status"] = "confirmed"
-    elif d == "pick":
-        alt = json.loads(ov.get("pick_json") or "{}")
-        rec.update(status="confirmed", source=alt.get("source", ""), work_id=alt.get("work_id", ""),
-                   gb_id=alt.get("gb_id", ""), match_title=alt.get("title", ""),
-                   match_author=alt.get("author", ""), year=alt.get("year", ""),
-                   cover_url=alt.get("cover_url", ""), cover_id="", isbns="", subjects="")
-    elif d == "no-match":
-        rec.update(status="confirmed-unlisted", work_id="", match_title="", cover_url="")
+    elif d == "pick":                              # a candidate, possibly with edited details
+        a = json.loads(ov.get("pick_json") or "{}")
+        rec.update(status="confirmed", source=a.get("source", ""), work_id=a.get("work_id", ""),
+                   gb_id=a.get("gb_id", ""), match_title=a.get("title", ""),
+                   match_author=a.get("author", ""), year=a.get("year", ""),
+                   cover_url=a.get("cover_url", ""), cover_id="", isbns=a.get("isbn", ""), subjects="")
+    elif d == "no-match":                          # not in any catalogue; details typed in review
+        a = json.loads(ov.get("pick_json") or "{}")
+        rec.update(status="confirmed-unlisted", source="manual" if a else "", work_id="", gb_id="",
+                   match_title=a.get("title", ""), match_author=a.get("author", ""),
+                   year=a.get("year", ""), isbns=a.get("isbn", ""), cover_url="", cover_id="",
+                   subjects="")      # publisher stays in overrides.csv until the database step
     elif d == "not-a-book":
         rec["status"] = "not-a-book"
     return rec

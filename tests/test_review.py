@@ -90,6 +90,10 @@ class Guard(unittest.TestCase):
                                {"Host": "evil.example:80", "X-Review-Token": review.TOKEN})
         self.assertEqual(code, 403)
 
+    def test_search_needs_the_token(self):
+        code, _ = self.request("POST", "/search", {"row_id": "x"})
+        self.assertEqual(code, 403)
+
     def test_unknown_action_is_refused(self):
         code, body = self.request("POST", "/run", {"action": "rm -rf"},
                                   {"X-Review-Token": review.TOKEN})

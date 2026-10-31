@@ -98,11 +98,13 @@ losing your place, and every view able to open a book in place.
   facets and sort on the major categories: category, author, decade, subject,
   shelf location, format (and reading status, once Phase 2 decides what is
   public). Results as a dense list/table.
-- **Shelf view** — the books drawn as spines in their real shelf order (from
-  the shelf location), grouped by case and shelf. Hover shows title and
-  author; click opens the book. Spines are generated (colour from the cover
-  or category, width from page count, vertical title text) unless the open
-  decision on photo crops says otherwise.
+- **Shelf view** — the books as their **real spines**, cropped from the shelf
+  photos (step 4b), standing in their real shelf order and grouped by case and
+  shelf — a beautiful virtual bookshelf. Hover shows title and author; click
+  opens the book. Shelves can be **reassembled and reordered** like a real one:
+  by author, category, colour, height, year, or by hand (drag), with saved
+  arrangements. A generated spine (colour, width from page count, vertical
+  title) stands in only where no crop exists yet.
 - **Book focus** — an in-page panel or overlay, not a jump to Open Library:
   cover, full metadata from the database, all copies and where each sits on
   the shelf, subjects as links back into Search, and the Open Library link.
@@ -117,13 +119,31 @@ This is the Phase 1 finish line.
 
 ---
 
+### 4b. Spine capture  *(needed for the shelf view; Oct 31 requirement)*
+Record where every spine is in its photo, then cut it out:
+- extend the spine read so each row gets a **spine outline** in its photo
+  (a four-point polygon, since spines are often slightly tilted), stored in
+  `data/spines.csv` keyed by row id; backfill the 521 existing rows by
+  re-reading the 30 photos with that prompt and checking the outlines against
+  `photo:stack:position`;
+- `scripts/crop_spines.py` — straighten and crop each outline from the
+  full-resolution photo into `spines/<row_id>.jpg`, with its pixel height and
+  width (the shelf view uses them for true relative sizes) and dominant colour;
+- a review pass for spines: the review page shows each crop beside the book so
+  a bad outline is fixed by dragging its corners;
+- better versions later: re-shoot individual shelves, or photograph single
+  spines, and replace a crop without touching the rest.
+
+Until then the review page shows the whole shelf photo for each book (from
+Drive, or a local copy), labelled with the spine's stack and position.
+
 ## Phase 1a tooling (to make the read repeatable)
 
 The spine read was done interactively. To make adding a new shelf a
 one-command job:
 - `scripts/read_spines.py` — sends each preview (and left/right halves) to a
   vision model with a fixed prompt, gets back JSON rows in the `books.csv`
-  schema, appends them. Claude via API is the known-good option; compare a
+  schema plus each spine's outline for `data/spines.csv` (step 4b), appends them. Claude via API is the known-good option; compare a
   local Qwen-VL / Llama-vision on Ollama against 3 of these photos, using the
   current CSV as ground truth.
 - A barcode path for new purchases: phone camera → ISBN → straight into
@@ -173,4 +193,4 @@ Ollama) + sqlite-vec for "books about X" and "where did I read Y".
 | Repo visibility | public · private | **decided Oct 30:** public, as part of the portfolio hub |
 | What reading data is public | all · status only · none | none for now: `data/reading.csv` is git-ignored; decide before Phase 2 |
 | Major categories for search and sort | Open Library subjects as-is · curated list · both | curated list seeded from how the shelves are already grouped (SF by author, Sherlock Holmes, Harry Potter, politics, science/philosophy/AI, CS theory and theses, classics, recent reads), with Open Library subjects as secondary facets |
-| Spine images in the shelf view | generated spines · crops from the shelf photos | generated first; photo crops need per-spine bounding boxes and would publish parts of the (currently private) shelf photos |
+| Spine images in the shelf view | generated spines · crops from the shelf photos | **decided Oct 31: real spine crops** (step 4b), generated spines only as stand-ins. Still to decide: publish the crops on the public site (they are small parts of the private shelf photos) or keep the spine view local |

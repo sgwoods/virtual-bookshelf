@@ -5,6 +5,16 @@ This is the dated log of work and results. What exists and how it works is in
 
 ## Latest (Oct 31)
 
+- **Review cards for real decisions** (from the first review session): covers
+  about three times larger and click-to-enlarge; the shelf photo on every card
+  with the spine's stack and position; **Search harder** and **search by text
+  or ISBN** when no candidate is right (e.g. Sawyer's *Wake* came back only
+  as Gaiman's *The Wake*); **Edit & use** to correct a candidate's details;
+  **Not listed — add details**. 33 tests.
+- **Spines are now a core requirement**: the shelf view will be built from
+  real spine crops that can be rearranged like a real shelf. ROADMAP step 4b
+  plans spine outlines in `data/spines.csv` and the crops.
+
 - **Review page is now the control panel.** Buttons for get latest, retry
   lookups, apply decisions, rebuild and preview the site, run tests, save &
   push (on a review branch, never `main`) and Finish (all of it in order);

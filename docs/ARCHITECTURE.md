@@ -105,6 +105,22 @@ Decisions — use this candidate, best guess is right / looks right, not listed,
 not a book, fix the spine read — are written to `data/overrides.csv`, and
 spine corrections into `data/books.csv`.
 
+Covers are shown large; click any cover for the full-size image. Each card
+also shows the **shelf photo** the book was read from, labelled with its stack
+and position — a local copy from `photos/` if present, otherwise Drive's
+thumbnail of the private photo (it loads because the browser is signed in to
+Google; nothing is downloaded or published). Click to enlarge, click again to
+zoom.
+
+When no candidate is right: **Search harder** runs wider Open Library and
+Google Books searches with more results; **Search by text or ISBN** searches
+for exactly what is typed, or looks an ISBN up directly (the surest route for a
+book in hand). **Edit & use** confirms a candidate with corrected title,
+author, year or ISBN (e.g. a reprint year); **Not listed — add details**
+records year, publisher and ISBN for books no catalogue has. Edited details
+travel in the decision (`pick_json` in `data/overrides.csv`) and win in
+`data/resolved.csv`.
+
 **Actions bar.** The header shows lookup counts, the git branch, the number of
 decisions and whether any data is not yet pushed, and buttons for the steps in
 `scripts/pipeline.py`, run one at a time with their output in a log panel:
