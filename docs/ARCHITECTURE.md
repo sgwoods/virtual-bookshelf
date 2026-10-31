@@ -112,6 +112,11 @@ thumbnail of the private photo (it loads because the browser is signed in to
 Google; nothing is downloaded or published). Click to enlarge, click again to
 zoom.
 
+Each card also links to a **Google Images** search for the spine read, opened
+in a new tab for a person to look at: seller photos often show the ISBN,
+publisher and catalogue number. Nothing is fetched automatically, and those
+images are never used as covers.
+
 When no candidate is right: **Search harder** runs wider Open Library and
 Google Books searches with more results; **Search by text or ISBN** searches
 for exactly what is typed, or looks an ISBN up directly (the surest route for a

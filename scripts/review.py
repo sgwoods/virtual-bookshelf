@@ -31,7 +31,7 @@ from __future__ import annotations
 import argparse, csv, html, json, secrets, sys, threading, time, webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote_plus, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pipeline                                    # noqa: E402
@@ -348,6 +348,16 @@ def shelf_photo(b, drive):
             f'<div class="cap">{esc(cap)} · click to enlarge, click again to zoom</div></div>')
 
 
+def image_search_url(b) -> str:
+    """Google image search for the spine read, to open in a new tab.
+
+    For a person to look at — seller photos often show the ISBN, publisher and
+    catalogue number. Nothing is fetched automatically and none of those images
+    are used as covers (they belong to the sellers)."""
+    q = f"{b['title']} {resolve.first_author(b['author'])}".strip()
+    return "https://www.google.com/search?udm=2&q=" + quote_plus(q)
+
+
 def photo_link(photo, drive):
     if (PHOTOS / f"{photo}_small.jpg").exists():
         return f'<a href="/photo/{esc(photo)}" target="_blank">view photo</a>'
@@ -371,7 +381,9 @@ def card(b, r, ov, drive, check=False):
       <span class="chip {esc(status)}">lookup: {esc(status)}</span>
       {f'<span class="chip check">check: matched without the subtitle</span>' if check else ''}</div>
     {f'<div class="note">matched to <b>{esc(r.get("match_title"))}</b> · {esc(r.get("match_author"))} {esc(r.get("year"))}</div>' if check else ''}
-    <div class="note">{esc(b['photo'])} · {esc(b['stack'])} #{esc(b['position'])} · {photo_link(b['photo'], drive)}</div>
+    <div class="note">{esc(b['photo'])} · {esc(b['stack'])} #{esc(b['position'])} · {photo_link(b['photo'], drive)}
+      · <a href="{esc(image_search_url(b))}" target="_blank" rel="noopener"
+           title="Look at photos of this book (ISBN, publisher, edition) — opens Google Images">Google Images ↗</a></div>
     {f'<div class="note">{esc(b["notes"])}</div>' if b["notes"] else ''}
     {shelf_photo(b, drive)}
     <div class="acts">

@@ -38,6 +38,12 @@ class QuickChecks(unittest.TestCase):
                                             {"status": "matched", "match_title": "Serenity"}))
 
 
+class ImageSearch(unittest.TestCase):
+    def test_link_searches_title_and_first_author(self):
+        url = review.image_search_url({"title": "The Best of Trek 2", "author": "Walter Irwin and G. B. Love (eds.)"})
+        self.assertEqual(url, "https://www.google.com/search?udm=2&q=The+Best+of+Trek+2+Walter+Irwin")
+
+
 class PageScript(unittest.TestCase):
     @unittest.skipUnless(shutil.which("node"), "node not installed")
     def test_script_parses(self):
