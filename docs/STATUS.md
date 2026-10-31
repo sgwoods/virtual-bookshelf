@@ -5,6 +5,11 @@ This is the dated log of work and results. What exists and how it works is in
 
 ## Latest (Oct 31)
 
+- **No more Terminal for updates.** The review page shows a banner when a new
+  version is on GitHub; **Update & restart** brings it in (keeping
+  unpublished review data) and restarts the page in place. **Restart** is
+  always in the bar. 66 tests.
+
 - **Your images on the public site.** Each image records where it came from
   automatically (macOS's "Where from" for downloads, or the new **📚 Add to
   bookshelf** bookmark, which sends the clicked picture on Google Images

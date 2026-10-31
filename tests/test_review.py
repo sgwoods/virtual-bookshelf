@@ -59,6 +59,13 @@ class ImageSearch(unittest.TestCase):
         self.assertEqual(url, "https://www.google.com/search?udm=2&q=The+Best+of+Trek+2+Walter+Irwin")
 
 
+class Restart(unittest.TestCase):
+    def test_restart_keeps_options_and_does_not_open_another_tab(self):
+        args = review.restart_args(["scripts/review.py", "--port", "8766"])
+        self.assertEqual(args[1:], ["scripts/review.py", "--port", "8766", "--no-browser"])
+        self.assertEqual(review.restart_args(["scripts/review.py", "--no-browser"])[2:], ["--no-browser"])
+
+
 class PageScript(unittest.TestCase):
     @unittest.skipUnless(shutil.which("node"), "node not installed")
     def test_script_parses(self):
@@ -141,6 +148,17 @@ class Guard(unittest.TestCase):
                                   {"X-Review-Token": review.TOKEN})
         self.assertEqual(code, 409)
         self.assertIn("unknown", body)
+
+    def test_restart_needs_the_token(self):
+        code, _ = self.request("POST", "/restart", {})
+        self.assertEqual(code, 403)
+
+    def test_version_is_readable(self):
+        review.VERSION.update(checked=__import__("time").time())     # no network in tests
+        code, body = self.request("GET", "/version")
+        self.assertEqual(code, 200)
+        v = json.loads(body)
+        self.assertEqual(set(v), {"behind", "restart_needed", "run"})
 
     def test_job_status_is_readable(self):
         code, body = self.request("GET", "/job")

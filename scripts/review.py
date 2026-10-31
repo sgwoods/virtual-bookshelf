@@ -28,7 +28,7 @@ so other websites open in the browser cannot drive these actions.
 """
 from __future__ import annotations
 
-import argparse, base64, csv, html, json, secrets, sys, threading, time, webbrowser
+import argparse, base64, csv, html, json, os, secrets, sys, threading, time, webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
@@ -52,9 +52,13 @@ SHOW_ALL = False
 TOKEN = secrets.token_urlsafe(24)       # per run; required on every POST
 PORT = 8765
 JOB = {"action": "", "running": False, "ok": None, "log": [], "started": 0.0}
+RUN_ID = secrets.token_hex(4)           # changes on every restart; the page waits for a new one
+STARTED_HEAD = ""                       # the commit this process was started from
+VERSION = {"behind": 0, "checked": 0.0}
+VERSION_LOCK = threading.Lock()
 JOB_LOCK = threading.Lock()
 ACTIONS = {           # button → (label, pipeline step, reload cards afterwards)
-    "update":  ("Get latest",        "update",  True),
+    "update":  ("Get latest",        "update_code", False),   # then restarts itself
     "retry":   ("Retry lookups",     "retry",   True),
     "apply":   ("Apply decisions",   "apply",   True),
     "build":   ("Rebuild site",      "build",   False),
@@ -62,6 +66,40 @@ ACTIONS = {           # button → (label, pipeline step, reload cards afterward
     "save":    ("Save & push",       "save",    True),
     "finish":  ("Finish",            "finish",  True),
 }
+
+
+# ---------------------------------------------------------------- new versions
+def check_version(max_age: float = 300) -> dict:
+    """Is there a newer version on GitHub, or newer code on disk than this process runs?"""
+    with VERSION_LOCK:
+        stale = time.time() - VERSION["checked"] > max_age
+        if stale:
+            VERSION["checked"] = time.time()
+    if stale:
+        n = pipeline.behind()
+        with VERSION_LOCK:
+            VERSION["behind"] = max(n, 0)
+    head = pipeline.git("rev-parse", "HEAD")
+    return {"behind": VERSION["behind"], "restart_needed": bool(STARTED_HEAD and head and head != STARTED_HEAD),
+            "run": RUN_ID}
+
+
+def restart_args(argv: list[str]) -> list[str]:
+    """The command line to come back with: same options, without opening another tab."""
+    args = [a for a in argv[1:]]
+    if "--no-browser" not in args:
+        args.append("--no-browser")
+    return [sys.executable, argv[0], *args]
+
+
+def restart_soon(delay: float = 0.8) -> None:
+    """Replace this process with a fresh one running the current code (same Terminal,
+    same port). The listening socket is not inherited, so the new one can bind it."""
+    def go():
+        time.sleep(delay)
+        print("\nrestarting with the current version…", flush=True)
+        os.execv(sys.executable, restart_args(sys.argv))
+    threading.Thread(target=go, daemon=True).start()
 
 
 # ---------------------------------------------------------------- data
@@ -206,6 +244,9 @@ align-items:center;justify-content:center;gap:10px;padding:16px}.crop.open{displ
 .crop .sel{position:absolute;border:2px solid #ffcf6e;box-shadow:0 0 0 9999px rgba(0,0,0,.55);display:none;pointer-events:none}
 .crop .cbar{display:flex;gap:8px;align-items:center;color:#eee;font-size:13px;flex-wrap:wrap;justify-content:center}
 .crop .cbar b{font-weight:600}
+.newver{display:none;width:100%;background:var(--acc);color:var(--card);border-radius:8px;padding:8px 12px;
+font-size:14px;align-items:center;gap:12px}.newver.open{display:flex}.newver span{margin-right:auto}
+.newver button{background:var(--card);color:var(--acc);border-color:var(--card);font-weight:600}
 .lb{position:fixed;inset:0;z-index:10;background:rgba(0,0,0,.82);display:none;align-items:center;
 justify-content:center;overflow:auto;cursor:zoom-out}.lb.open{display:flex}
 .lb img{max-width:96vw;max-height:94vh;object-fit:contain;cursor:zoom-in;background:#222}
@@ -474,6 +515,40 @@ function finishCrop(whole){
 }
 function closeCrop(){document.getElementById('crop').classList.remove('open')}
 
+/* ---- new versions: a banner, one click to update and restart ---- */
+async function checkVersion(fresh){
+  try{
+    const v=await (await fetch('/version'+(fresh?'?fresh=1':''))).json();
+    const nb=document.getElementById('newver');
+    if(v.behind>0){
+      nb.replaceChildren(el('span',null,'A new version of the review page is available ('+v.behind+' change'+(v.behind>1?'s':'')+' on GitHub).'));
+      const b=el('button',{type:'button'},'Update & restart'); b.onclick=()=>act('update'); nb.append(b); nb.classList.add('open');
+    } else if(v.restart_needed){
+      nb.replaceChildren(el('span',null,'Newer code is on this Mac than the page is running.'));
+      const b=el('button',{type:'button'},'Restart'); b.onclick=()=>restartPage(false); nb.append(b); nb.classList.add('open');
+    } else nb.classList.remove('open');
+    return v;
+  }catch(e){return null}
+}
+async function restartPage(){
+  const before=(await checkVersion(false)||{}).run;
+  const r=await api('/restart',{}); if(!r.ok){alert(await r.text());return}
+  waitForNewRun(before);
+}
+async function waitForNewRun(before){
+  const nb=document.getElementById('newver');
+  nb.replaceChildren(el('span',null,'Restarting the review page…')); nb.classList.add('open');
+  for(let i=0;i<60;i++){
+    await new Promise(r=>setTimeout(r,700));
+    try{const v=await (await fetch('/version')).json(); if(v.run && v.run!==before){location.reload();return}}catch(e){}
+  }
+  nb.replaceChildren(el('span',null,'The review page did not come back. Check its Terminal window.'));
+}
+let RUN_AT_LOAD=null;
+checkVersion(false).then(v=>{RUN_AT_LOAD=v&&v.run});
+setInterval(()=>checkVersion(false), 60000);
+window.addEventListener('focus',()=>checkVersion(true));
+
 /* ---- lightbox ---- */
 function lightbox(src, cap){
   const lb=document.getElementById('lb'); lb.classList.remove('zoom');
@@ -488,7 +563,7 @@ function lbClick(e){const lb=document.getElementById('lb');
 const CONFIRM = {
   save:'Apply your decisions, then commit the review data and push it to GitHub on a review branch?',
   finish:'Apply decisions, rebuild, run tests, then commit and push the data on a review branch?',
-  update:'Switch to main and pull the latest from GitHub?'};
+  update:'Get the latest version from GitHub and restart the review page? Your decisions and images are kept.'};
 let polling = null;
 async function act(name){
   if(CONFIRM[name] && !confirm(CONFIRM[name])) return;
@@ -512,6 +587,7 @@ async function poll(){
   pre.scrollTop = pre.scrollHeight;
   if(j.running){polling=setTimeout(poll,800);return}
   if(j.ok && j.action==='build') window.open('/site/','_blank');
+  if(j.ok && j.action==='update'){waitForNewRun(RUN_AT_LOAD);return}
   if(j.ok && j.reload) setTimeout(()=>location.reload(), 1200);
 }
 fetch('/job').then(r=>r.json()).then(j=>{if(j.running){openLog();poll()}});
@@ -637,7 +713,8 @@ def tools_bar():
         f'title="{esc(pipeline.STEPS[step].__doc__ or "")}">{esc(label)}</button>'
         for k, (label, step, _) in ACTIONS.items())
     return (f'<div class="tools"><span class="stat">{counts}<br>{state}</span>{btns}'
-            f'<button onclick="window.open(\'/site/\',\'_blank\')">Preview site</button></div>'
+            f'<button onclick="window.open(\'/site/\',\'_blank\')">Preview site</button>'
+            f'<button onclick="restartPage(false)" title="Restart the review page (picks up any newer code already on this Mac)">Restart</button></div>'
             f'<div class="tools"><span class="bmhelp">Once: drag this to your bookmarks bar →</span>'
             f'<a class="bm" href="{esc(bookmarklet())}" onclick="event.preventDefault();alert(\'Drag this button to your '
             f'bookmarks bar. Then, on Google Images, click the picture you want and click the bookmark: the image '
@@ -671,7 +748,7 @@ def page():
 <header><h1>Bookshelf review</h1><span class="count"><b id="left">{left}</b> of {len(every)} left</span>
 <div class="bar"><i style="width:{pct:.0f}%"></i></div>
 <a href="/?all={'0' if SHOW_ALL else '1'}">{'queue only' if SHOW_ALL else 'show all books'}</a>
-{tools_bar()}</header>
+{tools_bar()}<div id="newver" class="newver"></div></header>
 {hint}<main>{body}</main>
 <div id="lb" class="lb" onclick="lbClick(event)"><img alt=""><div class="lbcap"></div></div>
 <div id="crop" class="crop"><div class="cbar"><b class="ctitle"></b> · <span id="cropsize"></span></div>
@@ -708,6 +785,9 @@ def start_job(name: str) -> str:
             ok = False
         with JOB_LOCK:
             JOB.update(running=False, ok=ok)
+        if ok and name == "update":
+            log("Updated. Restarting the review page…")
+            restart_soon()
     threading.Thread(target=work, daemon=True).start()
     return ""
 
@@ -770,6 +850,9 @@ class H(BaseHTTPRequestHandler):
         if not allowed_host(self.headers.get("Host", ""), PORT):
             return self.send(403, "forbidden", "text/plain")
         u = urlparse(self.path)
+        if u.path == "/version":
+            fresh = parse_qs(u.query).get("fresh") == ["1"]
+            return self.send(200, json.dumps(check_version(60 if fresh else 300)), "application/json")
         if u.path == "/job":
             with JOB_LOCK:
                 return self.send(200, json.dumps({k: v for k, v in JOB.items() if k != "started"}),
@@ -825,6 +908,12 @@ class H(BaseHTTPRequestHandler):
             return self.send(403, "forbidden — reload the review page", "text/plain")
         try:
             data = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
+            if self.path == "/restart":
+                with JOB_LOCK:
+                    if JOB["running"]:
+                        return self.send(409, f"'{JOB['label']}' is still running", "text/plain")
+                restart_soon()
+                return self.send(200, "restarting", "text/plain")
             if self.path == "/run":
                 why = start_job(str(data.get("action", "")))
                 return self.send(409 if why else 200, why or "started", "text/plain")
@@ -875,6 +964,8 @@ def main():
     ap.add_argument("--no-browser", action="store_true")
     a = ap.parse_args()
     SHOW_ALL, PORT = a.all, a.port
+    global STARTED_HEAD
+    STARTED_HEAD = pipeline.git("rev-parse", "HEAD")
     try:
         srv = ThreadingHTTPServer(("127.0.0.1", a.port), H)
     except OSError:
