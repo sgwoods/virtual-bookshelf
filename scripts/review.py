@@ -1,30 +1,41 @@
 #!/usr/bin/env python3
-"""Local review page for the catalogue.
+"""Local review page for the catalogue — and the control panel for everyday actions.
 
 Usage:  python3 scripts/review.py            # opens http://127.0.0.1:8765
         python3 scripts/review.py --all      # show every row, not just the queue
         python3 scripts/review.py --port 9000 --no-browser
 
 Shows each book that needs a human: weak or missing Open Library match, or a
-spine read below high confidence. For each one you can
+spine read below high confidence. After those come quick checks: matches that
+dropped the spine's subtitle (e.g. "Manifold: Time" → "Manifold"), which are
+usually right but sometimes another book. For each card you can
   • pick the right candidate (cover, title, author, year shown),
-  • accept the best guess,
+  • say the best guess looks right,
   • mark it "not listed" (real book, just not in Open Library — keep as read),
   • mark it "not a book",
   • or fix the title/author as read from the spine (writes back to books.csv;
-    the next resolve.py run looks it up again).
+    the next lookup run looks it up again).
 
-Decisions go to data/overrides.csv. Re-run scripts/resolve.py afterwards to
-fold them into data/resolved.csv (instant — everything is cached).
+Decisions go to data/overrides.csv. The Actions bar runs the steps in
+scripts/pipeline.py without leaving the page: get the latest from GitHub,
+retry lookups, apply decisions, rebuild and preview the site, run the tests,
+save and push the data on a review branch — or Finish, which does apply →
+build → test → push in one go and gives the pull-request link.
 
 Standard library only. Binds to 127.0.0.1, so only this Mac can reach it.
+Requests must carry the page's per-session token and a localhost Host header,
+so other websites open in the browser cannot drive these actions.
 """
 from __future__ import annotations
 
-import argparse, csv, html, json, sys, threading, time, webbrowser
+import argparse, csv, html, json, secrets, sys, threading, time, webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import pipeline                                    # noqa: E402
+from resolve import clean_title, norm              # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 BOOKS = ROOT / "data/books.csv"
@@ -33,8 +44,22 @@ OVERRIDES = ROOT / "data/overrides.csv"
 DRIVE = ROOT / "data/drive_files.tsv"
 PHOTOS = ROOT / "photos/jpg"
 OV_FIELDS = ["row_id", "decision", "pick_json", "note", "decided_at"]
+SITE = ROOT / "_site"
 LOCK = threading.Lock()
 SHOW_ALL = False
+TOKEN = secrets.token_urlsafe(24)       # per run; required on every POST
+PORT = 8765
+JOB = {"action": "", "running": False, "ok": None, "log": [], "started": 0.0}
+JOB_LOCK = threading.Lock()
+ACTIONS = {           # button → (label, pipeline step, reload cards afterwards)
+    "update":  ("Get latest",        "update",  True),
+    "retry":   ("Retry lookups",     "retry",   True),
+    "apply":   ("Apply decisions",   "apply",   True),
+    "build":   ("Rebuild site",      "build",   False),
+    "test":    ("Run tests",         "test",    False),
+    "save":    ("Save & push",       "save",    True),
+    "finish":  ("Finish",            "finish",  True),
+}
 
 
 # ---------------------------------------------------------------- data
@@ -57,6 +82,25 @@ def needs_review(b, r):
     if b["confidence"] not in ("high", "checked"):
         return True
     return (r or {}).get("status") in ("weak", "none", "skipped", None, "")
+
+
+def subtitle_dropped(spine_title: str, match_title: str) -> bool:
+    """The spine title has a subtitle that the matched title leaves out.
+
+    "Outliers: The Story of Success" → "Outliers" is fine; "Serenity: Better
+    Days" → "Serenity" is another book. Only a person can tell, so these are
+    shown as quick checks rather than demoted automatically."""
+    ct = clean_title(spine_title or "")
+    if ":" not in ct or not match_title:
+        return False
+    sub = norm(ct.split(":", 1)[1])
+    return len(sub) >= 4 and sub not in norm(clean_title(match_title))
+
+
+def quick_check(b, r):
+    return (b["position"] != "0" and b["confidence"] in ("high", "checked")
+            and (r or {}).get("status") == "matched"
+            and subtitle_dropped(b["title"], (r or {}).get("match_title", "")))
 
 
 def write_override(row_id, decision, pick_json="", note=""):
@@ -124,11 +168,28 @@ form.fix{display:none;gap:6px;margin-top:8px;flex-wrap:wrap}form.fix.open{displa
 form.fix input{font:inherit;font-size:13px;padding:5px 8px;border:1px solid var(--line);border-radius:6px;
 background:var(--bg);color:var(--ink);flex:1;min-width:140px}
 .empty{text-align:center;color:var(--mute);padding:60px 0}.decided{font-size:13px;color:var(--ok);margin-top:6px}
+.chip.check{color:var(--acc)}h3.sect{font:600 15px/1.3 Georgia,serif;margin:26px 0 4px}
+p.sect{margin:0 0 14px;color:var(--mute);font-size:13px}
+.tools{width:100%;display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-size:13px}
+.tools .stat{color:var(--mute);margin-right:auto}.tools .stat b{color:var(--ink);font-weight:600}
+.tools button:disabled{opacity:.45;cursor:default}
+#log{position:fixed;left:0;right:0;bottom:0;z-index:3;background:var(--card);border-top:1px solid var(--line);
+max-height:42vh;display:none;flex-direction:column;box-shadow:0 -6px 18px rgba(0,0,0,.08)}
+#log.open{display:flex}#log .lh{display:flex;gap:10px;align-items:center;padding:8px 14px;
+border-bottom:1px solid var(--line);font-size:13px}#log .lh b{margin-right:auto}
+#log pre{margin:0;padding:10px 14px;overflow:auto;font:12px/1.45 ui-monospace,Menlo,monospace;white-space:pre-wrap}
+#log .ok{color:var(--ok)}#log .bad{color:var(--bad)}#log a{word-break:break-all}
+body.logopen main{padding-bottom:44vh}
 """
 
 JS = """
+const TOKEN = document.body.dataset.token;
+function api(path, data){
+  return fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-Review-Token':TOKEN},
+    body:JSON.stringify(data||{})});
+}
 async function post(path, data, card){
-  const r = await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+  const r = await api(path, data);
   if(!r.ok){alert('save failed: '+await r.text());return}
   card.classList.add('done');
   card.querySelector('.decided').textContent = '✓ ' + (data.label||data.decision) + ' — saved';
@@ -141,6 +202,38 @@ function pick(btn){decide(btn,'pick',JSON.parse(btn.dataset.cand))}
 function toggleFix(btn){btn.closest('.card').querySelector('form.fix').classList.toggle('open')}
 function fix(ev,form){ev.preventDefault();const c=form.closest('.card');
   post('/edit',{row_id:c.dataset.id,title:form.title.value,author:form.author.value,label:'corrected'},c)}
+
+/* ---- actions bar ---- */
+const CONFIRM = {
+  save:'Apply your decisions, then commit the review data and push it to GitHub on a review branch?',
+  finish:'Apply decisions, rebuild, run tests, then commit and push the data on a review branch?',
+  update:'Switch to main and pull the latest from GitHub?'};
+let polling = null;
+async function act(name){
+  if(CONFIRM[name] && !confirm(CONFIRM[name])) return;
+  const r = await api('/run',{action:name});
+  if(!r.ok){alert(await r.text());return}
+  openLog(); poll();
+}
+function openLog(){document.getElementById('log').classList.add('open');document.body.classList.add('logopen')}
+function closeLog(){document.getElementById('log').classList.remove('open');document.body.classList.remove('logopen')}
+function linkify(t){return t.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))
+  .replace(/(https:\\/\\/github\\.com\\/[^\\s]+)/g,'<a href="$1" target="_blank">$1</a>')}
+async function poll(){
+  clearTimeout(polling);
+  const j = await (await fetch('/job')).json();
+  document.querySelectorAll('.tools button').forEach(b=>b.disabled=j.running);
+  const st = document.getElementById('jobstate');
+  st.textContent = j.running ? (j.label+' — running…') : j.action ? (j.label+(j.ok?' — done':' — failed')) : '';
+  st.className = j.running ? '' : (j.ok ? 'ok' : 'bad');
+  const pre = document.getElementById('logtext');
+  pre.innerHTML = linkify(j.log.join('\\n'));
+  pre.scrollTop = pre.scrollHeight;
+  if(j.running){polling=setTimeout(poll,800);return}
+  if(j.ok && j.action==='build') window.open('/site/','_blank');
+  if(j.ok && j.reload) setTimeout(()=>location.reload(), 1200);
+}
+fetch('/job').then(r=>r.json()).then(j=>{if(j.running){openLog();poll()}});
 """
 
 
@@ -155,7 +248,7 @@ def photo_link(photo, drive):
     return ""
 
 
-def card(b, r, ov, drive):
+def card(b, r, ov, drive, check=False):
     rid_ = rid(b)
     status = (r or {}).get("status") or "unresolved"
     cands = json.loads((r or {}).get("candidates") or "[]")
@@ -174,10 +267,15 @@ def card(b, r, ov, drive):
   <div class="read">
     <h2>{esc(b['title'])}</h2><div class="by">{esc(b['author'])}</div>
     <div class="chips"><span class="chip {esc(b['confidence'])}">spine: {esc(b['confidence'])}</span>
-      <span class="chip {esc(status)}">lookup: {esc(status)}</span></div>
+      <span class="chip {esc(status)}">lookup: {esc(status)}</span>
+      {f'<span class="chip check">check: matched without the subtitle</span>' if check else ''}</div>
+    {f'<div class="note">matched to <b>{esc(r.get("match_title"))}</b> · {esc(r.get("match_author"))} {esc(r.get("year"))}</div>' if check else ''}
     <div class="note">{esc(b['photo'])} · {esc(b['stack'])} #{esc(b['position'])} · {photo_link(b['photo'], drive)}</div>
     {f'<div class="note">{esc(b["notes"])}</div>' if b["notes"] else ''}
     <div class="acts">
+      {(f'<button {"class=primary " if check else ""}onclick="decide(this,&#39;accept&#39;)" '
+        f'title="The current best match is the right book">{"Looks right" if check else "Best guess is right"}</button>')
+       if cands else ''}
       <button onclick="decide(this,'no-match')" title="Real book, just not in Open Library">Not listed — keep as read</button>
       <button onclick="decide(this,'not-a-book')">Not a book</button>
       <button onclick="toggleFix(this)">Fix spine read…</button>
@@ -193,22 +291,84 @@ def card(b, r, ov, drive):
 </section>"""
 
 
+def tools_bar():
+    s = pipeline.status()
+    lk = s["lookup"]
+    counts = " · ".join(f"{k} <b>{v}</b>" for k, v in sorted(lk.items()))
+    unpub = len(s["unpublished"])
+    state = (f"branch <b>{esc(s['branch'])}</b> · {s['decisions']} decisions · "
+             + (f"<b>{unpub} data file{'s' if unpub != 1 else ''} not yet pushed</b>" if unpub else "all pushed"))
+    btns = "".join(
+        f'<button {"class=primary " if k == "finish" else ""}onclick="act(\'{k}\')" '
+        f'title="{esc(pipeline.STEPS[step].__doc__ or "")}">{esc(label)}</button>'
+        for k, (label, step, _) in ACTIONS.items())
+    return (f'<div class="tools"><span class="stat">{counts}<br>{state}</span>{btns}'
+            f'<button onclick="window.open(\'/site/\',\'_blank\')">Preview site</button></div>')
+
+
 def page():
     books, res, ov, drive = load()
-    rows = [b for b in books if b["position"] != "0" and (SHOW_ALL or needs_review(b, res.get(rid(b))))]
-    left = sum(1 for b in rows if rid(b) not in ov)
-    body = "".join(card(b, res.get(rid(b)), ov.get(rid(b)), drive) for b in rows) or \
-        '<p class="empty">Nothing to review. 🎉  Run <code>python3 scripts/resolve.py</code> to apply decisions.</p>'
+    live = [b for b in books if b["position"] != "0"]
+    if SHOW_ALL:
+        rows, checks = live, []
+    else:
+        rows = [b for b in live if needs_review(b, res.get(rid(b)))]
+        checks = [b for b in live if quick_check(b, res.get(rid(b)))]
+    every = rows + checks
+    left = sum(1 for b in every if rid(b) not in ov)
+    body = "".join(card(b, res.get(rid(b)), ov.get(rid(b)), drive) for b in rows)
+    if checks:
+        body += (f'<h3 class="sect">Quick checks · {len(checks)}</h3><p class="sect">Matched, but without the '
+                 'subtitle on the spine. Usually the same book — press <b>Looks right</b> — but sometimes '
+                 'another one (<i>Serenity: Better Days</i> is not <i>Serenity</i>).</p>')
+        body += "".join(card(b, res.get(rid(b)), ov.get(rid(b)), drive, check=True) for b in checks)
+    body = body or '<p class="empty">Nothing to review. 🎉  Press <b>Finish</b> to apply, build, test and push.</p>'
     hint = "" if res else ('<p class="note" style="padding:0 20px">No <code>data/resolved.csv</code> yet — '
                            'run <code>python3 scripts/resolve.py</code> first to get Open Library candidates.</p>')
-    pct = 100 * (len(rows) - left) / len(rows) if rows else 100
+    pct = 100 * (len(every) - left) / len(every) if every else 100
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Bookshelf Review</title>
-<style>{CSS}</style></head><body>
-<header><h1>Bookshelf review</h1><span class="count"><b id="left">{left}</b> of {len(rows)} left</span>
+<style>{CSS}</style></head><body data-token="{esc(TOKEN)}">
+<header><h1>Bookshelf review</h1><span class="count"><b id="left">{left}</b> of {len(every)} left</span>
 <div class="bar"><i style="width:{pct:.0f}%"></i></div>
-<a href="/?all={'0' if SHOW_ALL else '1'}">{'queue only' if SHOW_ALL else 'show all books'}</a></header>
-{hint}<main>{body}</main><script>{JS}</script></body></html>"""
+<a href="/?all={'0' if SHOW_ALL else '1'}">{'queue only' if SHOW_ALL else 'show all books'}</a>
+{tools_bar()}</header>
+{hint}<main>{body}</main>
+<div id="log"><div class="lh"><b>Actions</b><span id="jobstate"></span>
+<button onclick="closeLog()">Hide</button></div><pre id="logtext"></pre></div>
+<script>{JS}</script></body></html>"""
+
+
+# ---------------------------------------------------------------- jobs
+def start_job(name: str) -> str:
+    """Run one ACTIONS entry in the background. Returns '' or a reason it can't start."""
+    if name not in ACTIONS:
+        return "unknown action"
+    label, step, reload = ACTIONS[name]
+    with JOB_LOCK:
+        if JOB["running"]:
+            return f"'{JOB['label']}' is still running"
+        JOB.update(action=name, label=label, running=True, ok=None, log=[], reload=reload,
+                   started=time.time())
+
+    def work():
+        def log(line):
+            with JOB_LOCK:
+                JOB["log"].append(line)
+        try:
+            ok = pipeline.STEPS[step](log)
+        except Exception as e:                      # keep the server alive, report it
+            log(f"error: {type(e).__name__}: {e}")
+            ok = False
+        with JOB_LOCK:
+            JOB.update(running=False, ok=ok)
+    threading.Thread(target=work, daemon=True).start()
+    return ""
+
+
+def allowed_host(host: str, port: int) -> bool:
+    """Only answer to our own address, which blocks DNS-rebinding tricks."""
+    return host in (f"127.0.0.1:{port}", f"localhost:{port}")
 
 
 # ---------------------------------------------------------------- server
@@ -222,7 +382,18 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):
         global SHOW_ALL
+        if not allowed_host(self.headers.get("Host", ""), PORT):
+            return self.send(403, "forbidden", "text/plain")
         u = urlparse(self.path)
+        if u.path == "/job":
+            with JOB_LOCK:
+                return self.send(200, json.dumps({k: v for k, v in JOB.items() if k != "started"}),
+                                 "application/json")
+        if u.path in ("/site", "/site/"):
+            f = SITE / "index.html"
+            if f.exists():
+                return self.send(200, f.read_bytes())
+            return self.send(404, "No site built yet — press Rebuild site.", "text/plain")
         if u.path == "/":
             q = parse_qs(u.query)
             if "all" in q: SHOW_ALL = q["all"][0] == "1"
@@ -235,8 +406,14 @@ class H(BaseHTTPRequestHandler):
         self.send(404, "not found", "text/plain")
 
     def do_POST(self):
+        if not allowed_host(self.headers.get("Host", ""), PORT) or \
+                not secrets.compare_digest(self.headers.get("X-Review-Token", ""), TOKEN):
+            return self.send(403, "forbidden — reload the review page", "text/plain")
         try:
             data = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
+            if self.path == "/run":
+                why = start_job(str(data.get("action", "")))
+                return self.send(409 if why else 200, why or "started", "text/plain")
             if self.path == "/decide":
                 if data["decision"] not in ("pick", "accept", "no-match", "not-a-book", "undo"):
                     raise ValueError("bad decision")
@@ -251,14 +428,19 @@ class H(BaseHTTPRequestHandler):
 
 
 def main():
-    global SHOW_ALL
+    global SHOW_ALL, PORT
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--no-browser", action="store_true")
     a = ap.parse_args()
-    SHOW_ALL = a.all
-    srv = ThreadingHTTPServer(("127.0.0.1", a.port), H)
+    SHOW_ALL, PORT = a.all, a.port
+    try:
+        srv = ThreadingHTTPServer(("127.0.0.1", a.port), H)
+    except OSError:
+        sys.exit(f"Port {a.port} is busy — the review page is probably already open in another "
+                 f"Terminal window (http://127.0.0.1:{a.port}/). Use that one, or run with "
+                 f"--port {a.port + 1}.")
     url = f"http://127.0.0.1:{a.port}/"
     print(f"review page: {url}   (Ctrl-C to stop)")
     if not a.no_browser:
@@ -266,7 +448,7 @@ def main():
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
-        print("\nstopped. next: python3 scripts/resolve.py  (applies your decisions)")
+        print("\nstopped. To apply, build, test and push in one go: python3 scripts/pipeline.py finish")
 
 
 if __name__ == "__main__":

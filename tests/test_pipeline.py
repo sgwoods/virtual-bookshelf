@@ -1,0 +1,85 @@
+"""pipeline.py git steps, against a throwaway repository and a local 'origin'.
+
+Checks that publishing never commits to main, only ever adds the three data
+files, and that updating refuses to run over unpublished review data.
+
+Run:  python3 -m unittest discover -s tests
+"""
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from datetime import datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+import pipeline  # noqa: E402
+
+
+def sh(cwd, *cmd):
+    return subprocess.run(cmd, cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+
+
+@unittest.skipUnless(shutil.which("git"), "git not installed")
+class Publish(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        origin, work = self.tmp / "origin.git", self.tmp / "work"
+        sh(self.tmp, "git", "init", "-q", "--bare", "-b", "main", str(origin))
+        sh(self.tmp, "git", "init", "-q", "-b", "main", str(work))
+        for k, v in (("user.name", "Test"), ("user.email", "t@example.com"), ("commit.gpgsign", "false")):
+            sh(work, "git", "config", k, v)
+        (work / "data").mkdir()
+        for f in ("books.csv", "resolved.csv"):
+            (work / "data" / f).write_text("a,b\n1,2\n")
+        (work / "notes.txt").write_text("not data\n")
+        sh(work, "git", "add", ".")
+        sh(work, "git", "commit", "-q", "-m", "start")
+        sh(work, "git", "remote", "add", "origin", str(origin))
+        sh(work, "git", "push", "-q", "-u", "origin", "main")
+        self.work, self._root = work, pipeline.ROOT
+        pipeline.ROOT = work
+        self.log = []
+
+    def tearDown(self):
+        pipeline.ROOT = self._root
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_nothing_to_publish(self):
+        self.assertTrue(pipeline.publish(self.log.append))
+        self.assertEqual(pipeline.branch(), "main")
+        self.assertIn("Nothing to publish", "\n".join(self.log))
+
+    def test_publish_goes_to_a_review_branch_with_data_only(self):
+        (self.work / "data/resolved.csv").write_text("a,b\n1,3\n")
+        (self.work / "data/overrides.csv").write_text("row_id,decision\nx,accept\n")
+        (self.work / "notes.txt").write_text("changed but not data\n")
+        self.assertTrue(pipeline.publish(self.log.append, "review"))
+        br = pipeline.branch()
+        self.assertTrue(br.startswith("review-"), br)
+        changed = sh(self.work, "git", "show", "--name-only", "--format=", "HEAD").split()
+        self.assertEqual(sorted(changed), ["data/overrides.csv", "data/resolved.csv"])
+        self.assertEqual(sh(self.work, "git", "rev-parse", "main"), sh(self.work, "git", "rev-parse", "origin/main"),
+                         "main must not move")
+        self.assertEqual(sh(self.work, "git", "rev-parse", "HEAD"), sh(self.work, "git", "rev-parse", f"origin/{br}"))
+        self.assertIn(pipeline.compare_url(br), self.log)
+        self.assertIn("notes.txt", sh(self.work, "git", "status", "--porcelain"))
+
+    def test_update_refuses_over_unpublished_data(self):
+        (self.work / "data/resolved.csv").write_text("a,b\n9,9\n")
+        self.assertFalse(pipeline.update(self.log.append))
+        self.assertIn("not yet published", "\n".join(self.log))
+
+    def test_update_returns_to_main_after_publishing(self):
+        (self.work / "data/resolved.csv").write_text("a,b\n1,3\n")
+        pipeline.publish(self.log.append, "review")
+        self.assertTrue(pipeline.update(self.log.append))
+        self.assertEqual(pipeline.branch(), "main")
+
+    def test_branch_name(self):
+        self.assertEqual(pipeline.review_branch_name(datetime(2026, 10, 31, 8, 5)), "review-20261031-0805")
+
+
+if __name__ == "__main__":
+    unittest.main()
