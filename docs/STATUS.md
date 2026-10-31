@@ -5,6 +5,13 @@ This is the dated log of work and results. What exists and how it works is in
 
 ## Latest (Oct 31)
 
+- **Your own images.** Images saved to Downloads (e.g. from the Google Images
+  link) appear on the card you were working on; crop to just this book
+  (one spine out of several, or just the cover), rotate, label Cover or Spine,
+  save. Kept in `images/` on the Mac with the original for re-cropping; shown
+  on review cards and in the local preview. Publishing them on the public
+  site is planned as ROADMAP step 4c. 49 tests.
+
 - **Review cards for real decisions** (from the first review session): covers
   about three times larger and click-to-enlarge; the shelf photo on every card
   with the spine's stack and position; **Search harder** and **search by text

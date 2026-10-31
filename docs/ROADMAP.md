@@ -137,6 +137,29 @@ Record where every spine is in its photo, then cut it out:
 Until then the review page shows the whole shelf photo for each book (from
 Drive, or a local copy), labelled with the spine's stack and position.
 
+### 4c. Your own images on the public site  *(Oct 31 requirement)*
+Today your downloaded, cropped covers and spines live in `images/` on the Mac
+and appear only in review and the local preview. The public site should show
+them too, in place of missing or poor covers. Plan:
+- **Record where each image came from.** On attach, read macOS's "Where from"
+  for the download (the page and image address) and store it with the image,
+  with its kind (web download or your own photo).
+- **A publish switch per image**, on by default, shown on the review card.
+- **Publishing on Save & push / Finish:** each published image is resized
+  with macOS `sips` (covers about 800 px on the long side, spines about
+  1200 px tall) into `site_images/<row id>/cover.jpg` / `spine.jpg`, which is
+  committed, plus `data/images.csv` (row id, kind, source, source address,
+  published, checksum). Originals and unpublished images stay in `images/`.
+- **The public build** copies `site_images/` into the site and prefers, per
+  book: your published image → Open Library cover → titled placeholder. The
+  book focus panel names the image's source.
+- **Size:** ~500 covers plus spines at these sizes is tens of MB — well within
+  GitHub and Pages limits.
+- **Rights:** cover art, and sellers' photos of it, belong to others. Small
+  catalogue images of books you own are common practice but not risk-free;
+  the source record, modest sizes and one-click unpublish keep it tidy, and
+  your own photos of your own copies are the cleanest source.
+
 ## Phase 1a tooling (to make the read repeatable)
 
 The spine read was done interactively. To make adding a new shelf a

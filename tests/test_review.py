@@ -115,6 +115,16 @@ class Guard(unittest.TestCase):
         code, _ = self.request("POST", "/search", {"row_id": "x"})
         self.assertEqual(code, 403)
 
+    def test_image_actions_need_the_token(self):
+        for path in ("/downloads", "/attach", "/recrop", "/detach"):
+            with self.subTest(path):
+                code, _ = self.request("POST", path, {"row_id": "x", "name": "a.jpg", "kind": "cover"})
+                self.assertEqual(code, 403)
+
+    def test_downloads_serve_only_images_there(self):
+        code, _ = self.request("GET", "/downloads/..%2Fsecret.jpg")
+        self.assertEqual(code, 404)
+
     def test_unknown_action_is_refused(self):
         code, body = self.request("POST", "/run", {"action": "rm -rf"},
                                   {"X-Review-Token": review.TOKEN})

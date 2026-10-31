@@ -108,7 +108,8 @@ def apply(log: Log) -> bool:
 
 
 def build(log: Log) -> bool:
-    return run([PY, "scripts/build_site.py"], log)
+    """Local preview build: includes your own images/ (CI builds without them)."""
+    return run([PY, "scripts/build_site.py", "--local-images"], log)
 
 
 def test(log: Log) -> bool:
