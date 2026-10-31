@@ -168,3 +168,45 @@ class Guard(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SpineBoxes(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self._spines = review.SPINES
+        review.SPINES = self.tmp / "spines.csv"
+        review.SPINES.write_text("row_id,x0,y0,x1,y1\n"
+                                 "IMG_8879:far-right:1,0.80,0.10,0.86,0.95\n"
+                                 "IMG_1:shelf:1,0.9,0.1,0.5,0.2\n"          # x1 < x0: ignored
+                                 "IMG_2:shelf:1,a,b,c,d\n")                 # not numbers: ignored
+
+    def tearDown(self):
+        review.SPINES = self._spines
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_only_valid_boxes_are_used(self):
+        self.assertEqual(review.spine_boxes(), {"IMG_8879:far-right:1": [0.80, 0.10, 0.86, 0.95]})
+
+    def test_shelf_photo_outlines_the_spine_and_opens_it(self):
+        b = {"photo": "IMG_8879", "stack": "far-right", "position": "1"}
+        html = review.shelf_photo(b, {"IMG_8879": "driveid"})
+        self.assertIn('class="box" style="left:80.0%;top:10.0%;width:6.0%;height:85.0%"', html)
+        self.assertIn("spineView(", html)
+        self.assertIn("(outlined)", html)
+
+    def test_no_box_without_an_outline(self):
+        html = review.shelf_photo({"photo": "IMG_8880", "stack": "left", "position": "2"}, {"IMG_8880": "id"})
+        self.assertNotIn('class="box"', html)
+
+
+class SideWindow(unittest.TestCase):
+    def test_bookmark_closes_the_google_side_window_after_sending(self):
+        import os
+        os.environ.setdefault("VB_CONFIG", tempfile.mkdtemp())
+        js = review.bookmarklet()
+        self.assertIn("window.name==='vbgoogle'", js)
+        self.assertIn("window.close()", js)
+
+    def test_google_link_opens_a_side_window(self):
+        self.assertIn("openGoogle", review.JS)
+        self.assertIn("'vbgoogle'", review.JS)

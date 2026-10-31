@@ -120,6 +120,10 @@ This is the Phase 1 finish line.
 ---
 
 ### 4b. Spine capture  *(needed for the shelf view; Oct 31 requirement)*
+**Built Oct 31:** `data/spines.csv` is read by the review page, which outlines
+the spine on the shelf photo and opens it on its own; **Import shelf photos**
+brings the photos onto the Mac. **Next:** fill `data/spines.csv` for all 521
+rows (a vision pass over the 30 imported photos), then the crops below.
 Record where every spine is in its photo, then cut it out:
 - extend the spine read so each row gets a **spine outline** in its photo
   (a four-point polygon, since spines are often slightly tilted), stored in

@@ -25,7 +25,7 @@ Standard library only.
 """
 from __future__ import annotations
 
-import csv, subprocess, sys
+import csv, re, shutil, subprocess, sys, zipfile
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -176,6 +176,60 @@ def publish(log: Log, message: str = "") -> bool:
     return ok
 
 
+PHOTO_NAME = re.compile(r"^IMG_\d+\.(heic|jpe?g|png)$", re.I)
+
+
+def import_photos(log: Log) -> bool:
+    """Shelf photos from Downloads into photos/: the newest Drive download (a .zip
+    of the folder) or loose IMG_*.HEIC files. Converts each with macOS `sips` to
+    photos/jpg/NAME.jpg (for zooming) and NAME_small.jpg (1600 px, for cards).
+    photos/ is git-ignored; the photos stay private."""
+    import local_images
+    dl, raw, jpg = local_images.downloads_dir(), ROOT / "photos/raw", ROOT / "photos/jpg"
+    raw.mkdir(parents=True, exist_ok=True)
+    jpg.mkdir(parents=True, exist_ok=True)
+    got = 0
+    zips = sorted((p for p in dl.glob("*.zip") if p.is_file()), key=lambda p: -p.stat().st_mtime) if dl.is_dir() else []
+    for z in zips[:3]:
+        with zipfile.ZipFile(z) as zf:
+            members = [m for m in zf.namelist() if PHOTO_NAME.match(Path(m).name)]
+            for m in members:
+                (raw / Path(m).name).write_bytes(zf.read(m))
+            if members:
+                log(f"{z.name}: {len(members)} photos")
+                got += len(members)
+    for p in dl.glob("IMG_*") if dl.is_dir() else []:
+        if PHOTO_NAME.match(p.name):
+            shutil.copyfile(p, raw / p.name)
+            got += 1
+    if not got and not any(raw.iterdir()):
+        log("No shelf photos found in Downloads. Open the Drive folder, choose Download all, "
+            "and press Import shelf photos again once the .zip has arrived.")
+        return False
+    sips = shutil.which("sips")
+    made = 0
+    for p in sorted(raw.iterdir()):
+        if not PHOTO_NAME.match(p.name):
+            continue
+        name = p.stem
+        for out, size in ((jpg / f"{name}.jpg", 4000), (jpg / f"{name}_small.jpg", 1600)):
+            if out.exists():
+                continue
+            if sips:
+                r = subprocess.run([ "sips", "-s", "format", "jpeg", "-Z", str(size), str(p), "--out", str(out)],
+                                   capture_output=True, text=True)
+                if r.returncode != 0:
+                    log(f"could not convert {p.name}: {r.stderr.strip()[:200]}")
+                    continue
+            elif p.suffix.lower() in (".jpg", ".jpeg"):
+                shutil.copyfile(p, out)
+            else:
+                continue
+            made += 1
+    log(f"Shelf photos ready: {len(list(jpg.glob('*_small.jpg')))} (converted {made} files) in photos/jpg/")
+    return True
+
+
 def preview(log: Log) -> bool:
     page = ROOT / "_site/index.html"
     if sys.platform == "darwin" and page.exists():
@@ -209,6 +263,7 @@ def save(log: Log) -> bool:
 
 STEPS["finish"] = finish
 STEPS["update_code"] = update_code
+STEPS["import_photos"] = import_photos
 STEPS["save"] = save
 
 

@@ -47,6 +47,8 @@ DRIVE = ROOT / "data/drive_files.tsv"
 PHOTOS = ROOT / "photos/jpg"
 OV_FIELDS = ["row_id", "decision", "pick_json", "note", "decided_at"]
 SITE = ROOT / "_site"
+SPINES = ROOT / "data/spines.csv"        # row_id,x0,y0,x1,y1 — spine outline as fractions of the photo
+DRIVE_FOLDER = "https://drive.google.com/drive/folders/1JzdleTTMrVzkyHPjlxewpk4VbQcn1uo0"
 LOCK = threading.Lock()
 SHOW_ALL = False
 TOKEN = secrets.token_urlsafe(24)       # per run; required on every POST
@@ -60,6 +62,7 @@ JOB_LOCK = threading.Lock()
 ACTIONS = {           # button → (label, pipeline step, reload cards afterwards)
     "update":  ("Get latest",        "update_code", False),   # then restarts itself
     "retry":   ("Retry lookups",     "retry",   True),
+    "photos":  ("Import shelf photos", "import_photos", True),
     "apply":   ("Apply decisions",   "apply",   True),
     "build":   ("Rebuild site",      "build",   False),
     "test":    ("Run tests",         "test",    False),
@@ -122,6 +125,20 @@ def needs_review(b, r):
     if b["confidence"] not in ("high", "checked"):
         return True
     return (r or {}).get("status") in ("weak", "none", "skipped", None, "")
+
+
+def spine_boxes() -> dict:
+    """{row_id: [x0, y0, x1, y1]} from data/spines.csv (fractions of the photo)."""
+    out = {}
+    if SPINES.exists():
+        for r in csv.DictReader(open(SPINES, encoding="utf-8")):
+            try:
+                box = [float(r[k]) for k in ("x0", "y0", "x1", "y1")]
+            except (KeyError, ValueError):
+                continue
+            if 0 <= box[0] < box[2] <= 1 and 0 <= box[1] < box[3] <= 1:
+                out[r["row_id"]] = box
+    return out
 
 
 def subtitle_dropped(spine_title: str, match_title: str) -> bool:
@@ -236,7 +253,7 @@ cursor:zoom-in;display:block;margin-bottom:3px}.own .x{font-size:11px;padding:1p
 .dl figure img,.dl figure .ph{width:120px;height:150px;object-fit:contain;background:var(--chip);border-radius:4px;
 display:flex;align-items:center;justify-content:center;cursor:zoom-in}
 .dl figure button{width:100%;margin-top:4px}.dl figure button.k-skip{opacity:.6}
-.dl figcaption{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dl .row{margin-top:10px;display:flex;gap:6px}
+.dl figcaption{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dl figcaption.auto{color:var(--ok)}.dl .row{margin-top:10px;display:flex;gap:6px}
 .crop{position:fixed;inset:0;z-index:11;background:rgba(0,0,0,.86);display:none;flex-direction:column;
 align-items:center;justify-content:center;gap:10px;padding:16px}.crop.open{display:flex}
 .crop .stage{position:relative;touch-action:none;cursor:crosshair;line-height:0}
@@ -247,6 +264,17 @@ align-items:center;justify-content:center;gap:10px;padding:16px}.crop.open{displ
 .newver{display:none;width:100%;background:var(--acc);color:var(--card);border-radius:8px;padding:8px 12px;
 font-size:14px;align-items:center;gap:12px}.newver.open{display:flex}.newver span{margin-right:auto}
 .newver button{background:var(--card);color:var(--acc);border-color:var(--card);font-weight:600}
+.shelf .shot{position:relative;line-height:0}.shelf .shot img{width:100%}
+.box{position:absolute;border:2px solid #ffcf6e;box-shadow:0 0 0 1px rgba(0,0,0,.65),0 0 0 9999px rgba(0,0,0,.28);
+border-radius:2px;cursor:zoom-in}.shelf .shot{overflow:hidden;border-radius:6px}
+.lbwrap{position:relative;display:inline-block;line-height:0}
+.lbbox{position:absolute;border:3px solid #ffcf6e;box-shadow:0 0 0 2px rgba(0,0,0,.6);display:none;pointer-events:none}
+.sv{position:fixed;inset:0;z-index:12;background:rgba(0,0,0,.88);display:none;flex-direction:column;align-items:center;
+justify-content:center;gap:10px}.sv.open{display:flex}.sv .svstage{position:relative}
+.sv .svport{position:absolute;left:50%;top:50%;overflow:hidden;background:#111}
+.sv .svport img{position:absolute;max-width:none;max-height:none}
+.sv .svbox{position:absolute;border:2px solid #ffcf6e;pointer-events:none}
+.sv .cbar{display:flex;gap:8px;align-items:center;color:#eee;font-size:13px}
 .lb{position:fixed;inset:0;z-index:10;background:rgba(0,0,0,.82);display:none;align-items:center;
 justify-content:center;overflow:auto;cursor:zoom-out}.lb.open{display:flex}
 .lb img{max-width:96vw;max-height:94vh;object-fit:contain;cursor:zoom-in;background:#222}
@@ -389,6 +417,57 @@ const KIND_LABEL={cover:'Cover',spine:'Spine',skip:'Skip'};
 function setKind(btn, k){btn.dataset.kind=k; btn.textContent=KIND_LABEL[k]; btn.className='k-'+k}
 function guessKind(btn, w, h){ if(btn.dataset.kind!=='skip') setKind(btn, h > 2.6*w ? 'spine' : 'cover') }
 
+/* Auto-crop: trim plain margins; for a spine picture showing several books, keep one.
+   Returns a rectangle in the image's own pixels, or null if nothing to trim. */
+function suggestRect(im, kind){
+  const W=im.naturalWidth, H=im.naturalHeight; if(!W||!H) return null;
+  const s=Math.min(1, 360/Math.max(W,H)), w=Math.max(2,Math.round(W*s)), h=Math.max(2,Math.round(H*s));
+  const cv=document.createElement('canvas'); cv.width=w; cv.height=h;
+  const g=cv.getContext('2d'); g.drawImage(im,0,0,w,h);
+  let d; try{ d=g.getImageData(0,0,w,h).data }catch(e){ return null }
+  const at=(x,y)=>(y*w+x)*4;
+  let R=0,G=0,B=0,n=0;
+  const add=(x,y)=>{const i=at(x,y); R+=d[i]; G+=d[i+1]; B+=d[i+2]; n++};
+  for(let x=0;x<w;x++){add(x,0); add(x,h-1)} for(let y=0;y<h;y++){add(0,y); add(w-1,y)}
+  R/=n; G/=n; B/=n;
+  const far=(x,y)=>{const i=at(x,y); return Math.abs(d[i]-R)+Math.abs(d[i+1]-G)+Math.abs(d[i+2]-B)>60};
+  const colFrac=(x,ya,yb)=>{let c=0; for(let y=ya;y<=yb;y++) if(far(x,y)) c++; return c/(yb-ya+1)};
+  const rowFrac=(y,xa,xb)=>{let c=0; for(let x=xa;x<=xb;x++) if(far(x,y)) c++; return c/(xb-xa+1)};
+  let x0=0,x1=w-1,y0=0,y1=h-1;
+  while(x0<x1 && colFrac(x0,0,h-1)<0.03) x0++;
+  while(x1>x0 && colFrac(x1,0,h-1)<0.03) x1--;
+  while(y0<y1 && rowFrac(y0,x0,x1)<0.03) y0++;
+  while(y1>y0 && rowFrac(y1,x0,x1)<0.03) y1--;
+  if(kind==='spine' && (x1-x0) > 0.16*(y1-y0)){   /* wider than one spine usually is */
+    /* several spines side by side: split at strong vertical edges and at background gaps */
+    const cols=[]; for(let x=x0;x<=x1;x++) cols.push(colFrac(x,y0,y1));
+    /* a dividing line between two books runs most of the height; a design element does not */
+    const edge=[]; for(let x=x0+1;x<=x1;x++){let c=0,n=0; for(let y=y0;y<=y1;y+=2){const a=at(x-1,y), b=at(x,y);
+      if(Math.abs(d[a]-d[b])+Math.abs(d[a+1]-d[b+1])+Math.abs(d[a+2]-d[b+2])>60) c++; n++} edge.push(c/Math.max(1,n))}
+    const minw=(x1-x0)*0.06;
+    const segs=[]; let a=x0;
+    for(let x=x0+1;x<=x1+1;x++){
+      const cut = x>x1 || cols[x-x0]<0.2 || edge[x-x0-1]>0.7;
+      if(cut){ if(x-a>=minw){let fill=0; for(let i=a;i<x;i++) fill+=cols[i-x0]; if(fill/(x-a)>0.5) segs.push([a,x-1])} a=x }
+    }
+    if(segs.length>1){
+      const cx=(x0+x1)/2; let best=segs.find(([p,q])=>p<=cx&&cx<=q);
+      if(!best) best=segs.reduce((m,v)=>(v[1]-v[0]>m[1]-m[0]?v:m));
+      [x0,x1]=best;
+    }
+  }
+  const pad=1; x0=Math.max(0,x0-pad); y0=Math.max(0,y0-pad); x1=Math.min(w-1,x1+pad); y1=Math.min(h-1,y1+pad);
+  const r={x:x0/s, y:y0/s, w:(x1-x0+1)/s, h:(y1-y0+1)/s};
+  if(r.w*r.h > 0.92*W*H) return null;
+  return r;
+}
+function cropURL(im, r){
+  const scale=Math.min(1, 2400/Math.max(r.w,r.h));
+  const out=document.createElement('canvas'); out.width=Math.round(r.w*scale); out.height=Math.round(r.h*scale);
+  out.getContext('2d').drawImage(im, r.x, r.y, r.w, r.h, 0, 0, out.width, out.height);
+  return out.toDataURL('image/jpeg', 0.92);
+}
+
 async function showDownloads(card, since, quiet){
   const box=card.querySelector('.dl');
   const r=await api('/downloads',{since:since||0});
@@ -399,7 +478,7 @@ async function showDownloads(card, since, quiet){
     box.replaceChildren(el('p',null,'No images in Downloads from the last few hours. Save one there (from Google Images, say) and press Add downloaded images again.'));
     box.classList.add('open'); return}
   const intro=el('p',null,files.length+' image'+(files.length>1?'s':'')+' in Downloads'+
-    (since?' since you opened Google Images':'')+'. Crop each to just this book (one spine, or just the cover), check its label — Cover, Spine or Skip — then Save these.');
+    (since?' since you opened Google Images':'')+'. Each is cropped automatically to just this book and labelled Cover or Spine — check them and press Save these. Re-crop… or click a label (Cover → Spine → Skip) only if a suggestion is wrong.');
   const items=el('div',{class:'items'});
   for(const f of files){
     const fig=el('figure'); fig.dataset.name=f.name;
@@ -408,12 +487,23 @@ async function showDownloads(card, since, quiet){
     if(f.showable){
       const src='/downloads/'+encodeURIComponent(f.name);
       const im=el('img',{src,alt:''});
-      im.onload=()=>{ if(!fig.dataset.crop) guessKind(kind, im.naturalWidth, im.naturalHeight) };
       const crop=el('button',{type:'button'},'Crop…');
+      const note=el('figcaption',{class:'auto'},'');
+      let sug=null;
+      im.onload=()=>{
+        if(fig.dataset.loaded) return; fig.dataset.loaded='1';
+        guessKind(kind, im.naturalWidth, im.naturalHeight);
+        sug=suggestRect(im, kind.dataset.kind);
+        if(sug){
+          const url=cropURL(im, sug); fig.dataset.crop=url;
+          im.src=url;
+          guessKind(kind, sug.w, sug.h); note.textContent='auto-cropped ✓'; crop.textContent='Re-crop…';
+        }
+      };
       const doCrop=()=>openCropper(src, f.name, (url,w,h)=>{
-        fig.dataset.crop=url; im.src=url; guessKind(kind,w,h); crop.textContent='Re-crop…'});
+        fig.dataset.crop=url; im.src=url; guessKind(kind,w,h); crop.textContent='Re-crop…'; note.textContent='cropped ✓'}, sug);
       crop.onclick=doCrop; im.onclick=doCrop;
-      fig.append(im, el('figcaption',{title:f.name},f.name));
+      fig.append(im, note, el('figcaption',{title:f.name},f.name));
       if(f.source) fig.append(el('figcaption',{class:'src',title:'Where this image came from'},'from '+f.source));
       fig.append(crop, kind);
     } else {
@@ -470,12 +560,15 @@ window.addEventListener('focus',()=>{
 
 /* ---- cropper: drag a box, rotate in quarter turns, keep just that part ---- */
 const CR={};
-function openCropper(src, title, done){
+function openCropper(src, title, done, suggest){
   const box=document.getElementById('crop');
   CR.done=done; CR.rot=0; CR.rect=null;
   box.querySelector('.ctitle').textContent=title;
   CR.base=new Image();
-  CR.base.onload=()=>{drawRotated(); box.classList.add('open')};
+  CR.base.onload=()=>{drawRotated(); box.classList.add('open');
+    if(suggest) requestAnimationFrame(()=>{
+      const cv=document.querySelector('#crop canvas'), k=cv.width/cv.getBoundingClientRect().width;
+      CR.rect={x:suggest.x/k, y:suggest.y/k, w:suggest.w/k, h:suggest.h/k}; showSel()})};
   CR.base.onerror=()=>alert('Could not load that image to crop.');
   CR.base.src=src;
 }
@@ -550,11 +643,53 @@ setInterval(()=>checkVersion(false), 60000);
 window.addEventListener('focus',()=>checkVersion(true));
 
 /* ---- lightbox ---- */
-function lightbox(src, cap){
+function lightbox(src, cap, box){
   const lb=document.getElementById('lb'); lb.classList.remove('zoom');
   lb.querySelector('img').src=src; lb.querySelector('.lbcap').textContent=cap||'';
+  const bx=lb.querySelector('.lbbox');
+  if(box){Object.assign(bx.style,{display:'block',left:box[0]*100+'%',top:box[1]*100+'%',
+    width:(box[2]-box[0])*100+'%',height:(box[3]-box[1])*100+'%'})} else bx.style.display='none';
   lb.classList.add('open')}
-document.addEventListener('keydown',e=>{if(e.key==='Escape')document.getElementById('lb').classList.remove('open')});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){
+  document.getElementById('lb').classList.remove('open'); closeSpine()}});
+
+/* ---- just this spine: the outlined part of the shelf photo, enlarged ---- */
+const SV={turn:false};
+function spineView(src, box, cap){
+  const sv=document.getElementById('sv'), im=sv.querySelector('.svport img');
+  sv.querySelector('.svcap').textContent=cap||''; SV.box=box; SV.turn=false;
+  if(im.getAttribute('src')===src && im.complete && im.naturalWidth){layoutSpine()}
+  else {im.onload=layoutSpine; im.src=src}
+  sv.classList.add('open');
+}
+function layoutSpine(){
+  const sv=document.getElementById('sv'), st=sv.querySelector('.svstage'), port=sv.querySelector('.svport'),
+        im=port.querySelector('img'), bx=port.querySelector('.svbox'), b=SV.box;
+  const W=im.naturalWidth, H=im.naturalHeight; if(!W) return;
+  const bw=b[2]-b[0], bh=b[3]-b[1];
+  const x0=Math.max(0,b[0]-bw*0.35), x1=Math.min(1,b[2]+bw*0.35), y0=Math.max(0,b[1]-bh*0.03), y1=Math.min(1,b[3]+bh*0.03);
+  const rw=(x1-x0)*W, rh=(y1-y0)*H;
+  const vw=innerWidth*0.92, vh=innerHeight*0.8;
+  const k=SV.turn ? Math.min(vw/rh, vh/rw) : Math.min(vw/rw, vh/rh);
+  const pw=rw*k, ph=rh*k;
+  st.style.width=(SV.turn?ph:pw)+'px'; st.style.height=(SV.turn?pw:ph)+'px';
+  Object.assign(port.style,{width:pw+'px',height:ph+'px',
+    transform:'translate(-50%,-50%)'+(SV.turn?' rotate(-90deg)':'')});
+  Object.assign(im.style,{width:W*k+'px',height:H*k+'px',left:(-x0*W*k)+'px',top:(-y0*H*k)+'px'});
+  Object.assign(bx.style,{left:(b[0]-x0)*W*k+'px',top:(b[1]-y0)*H*k+'px',width:bw*W*k+'px',height:bh*H*k+'px'});
+}
+function turnSpine(){SV.turn=!SV.turn; layoutSpine()}
+function closeSpine(){document.getElementById('sv').classList.remove('open')}
+window.addEventListener('resize',()=>{if(document.getElementById('sv').classList.contains('open')) layoutSpine()});
+
+/* ---- Google Images in a side window, not a tab ---- */
+function openGoogle(a){
+  markLink(a);
+  const w=Math.min(960, Math.round(screen.availWidth*0.5)), h=screen.availHeight;
+  const win=window.open(a.href,'vbgoogle','popup,width='+w+',height='+h+',left='+(screen.availWidth-w)+',top=0');
+  if(win) win.focus();
+  return !win;      /* if popups are blocked, fall back to a normal tab */
+}
 function lbClick(e){const lb=document.getElementById('lb');
   if(e.target.tagName==='IMG'){lb.classList.toggle('zoom');return}
   lb.classList.remove('open')}
@@ -603,7 +738,7 @@ def shelf_photo(b, drive):
     Google; the photos themselves stay private in Drive)."""
     photo = b["photo"]
     if (PHOTOS / f"{photo}_small.jpg").exists():
-        small = big = f"/photo/{photo}"
+        small, big = f"/photo/{photo}", f"/photo/{photo}?full=1"
     elif photo in drive:
         fid = drive[photo]
         small = f"https://drive.google.com/thumbnail?id={fid}&sz=w900"
@@ -611,11 +746,20 @@ def shelf_photo(b, drive):
     else:
         return ""
     where = f"{b['stack']} stack, #{b['position']}" if b["stack"] not in ("shelf", "") else f"#{b['position']} on the shelf"
-    cap = f"{photo} — this book is {where}"
-    return (f'<div class="shelf"><img loading="lazy" src="{esc(small)}" alt="shelf photo {esc(photo)}" '
-            f'onclick="lightbox(&#39;{esc(big)}&#39;, &#39;{esc(cap)}&#39;)" '
-            f'onerror="this.parentNode.querySelector(&#39;.cap&#39;).textContent=&#39;Shelf photo not available here — {esc(photo)}&#39;;this.remove()">'
-            f'<div class="cap">{esc(cap)} · click to enlarge, click again to zoom</div></div>')
+    box = spine_boxes().get(rid(b))
+    cap = f"{photo} — this book is {where}" + (" (outlined)" if box else "")
+    bj = esc(json.dumps(box)) if box else "null"
+    overlay = ""
+    if box:
+        x0, y0, x1, y1 = (round(100 * v, 3) for v in box)
+        overlay = (f'<div class="box" style="left:{x0}%;top:{y0}%;width:{round(x1 - x0, 3)}%;height:{round(y1 - y0, 3)}%" '
+                   f'title="Click to see just this spine" '
+                   f'onclick="event.stopPropagation();spineView(&#39;{esc(big)}&#39;,{bj},&#39;{esc(cap)}&#39;)"></div>')
+    hint = "click the outlined spine to see just it, or the photo to enlarge" if box else "click to enlarge, click again to zoom"
+    return (f'<div class="shelf"><div class="shot"><img loading="lazy" src="{esc(small)}" alt="shelf photo {esc(photo)}" '
+            f'onclick="lightbox(&#39;{esc(big)}&#39;, &#39;{esc(cap)}&#39;, {bj})" '
+            f'onerror="this.closest(&#39;.shelf&#39;).querySelector(&#39;.cap&#39;).textContent=&#39;Shelf photo not available here — {esc(photo)}&#39;;this.parentNode.remove()">'
+            f'{overlay}</div><div class="cap">{esc(cap)} · {hint}</div></div>')
 
 
 def image_search_url(b) -> str:
@@ -661,8 +805,8 @@ def card(b, r, ov, drive, check=False):
       {f'<span class="chip check">check: matched without the subtitle</span>' if check else ''}</div>
     {f'<div class="note">matched to <b>{esc(r.get("match_title"))}</b> · {esc(r.get("match_author"))} {esc(r.get("year"))}</div>' if check else ''}
     <div class="note">{esc(b['photo'])} · {esc(b['stack'])} #{esc(b['position'])} · {photo_link(b['photo'], drive)}
-      · <a href="{esc(image_search_url(b))}" target="_blank" rel="noopener" onclick="markLink(this)"
-           title="Look at photos of this book; images you save to Downloads then appear here">Google Images ↗</a></div>
+      · <a href="{esc(image_search_url(b))}" target="_blank" rel="noopener" onclick="return openGoogle(this)"
+           title="Opens Google Images in a side window: click a picture, then your Add to bookshelf bookmark">Google Images ↗</a></div>
     {f'<div class="note">{esc(b["notes"])}</div>' if b["notes"] else ''}
     {shelf_photo(b, drive)}
     {own_images(rid_)}
@@ -719,7 +863,11 @@ def tools_bar():
             f'<a class="bm" href="{esc(bookmarklet())}" onclick="event.preventDefault();alert(\'Drag this button to your '
             f'bookmarks bar. Then, on Google Images, click the picture you want and click the bookmark: the image '
             f'arrives on the card you came from, with its source.\')">📚 Add to bookshelf</a>'
-            f'<span class="bmhelp">On Google Images: click the picture, then the bookmark.</span></div>')
+            f'<span class="bmhelp">On Google Images: click the picture, then the bookmark.</span>'
+            + ('' if any(PHOTOS.glob("*_small.jpg")) else
+               f'<span class="bmhelp">· Shelf photos: <a href="{DRIVE_FOLDER}" target="_blank" rel="noopener">open the Drive '
+               f'folder</a>, Download all, then press <b>Import shelf photos</b>.</span>')
+            + '</div>')
 
 
 def page():
@@ -750,7 +898,11 @@ def page():
 <a href="/?all={'0' if SHOW_ALL else '1'}">{'queue only' if SHOW_ALL else 'show all books'}</a>
 {tools_bar()}<div id="newver" class="newver"></div></header>
 {hint}<main>{body}</main>
-<div id="lb" class="lb" onclick="lbClick(event)"><img alt=""><div class="lbcap"></div></div>
+<div id="lb" class="lb" onclick="lbClick(event)"><span class="lbwrap"><img alt=""><div class="lbbox"></div></span><div class="lbcap"></div></div>
+<div id="sv" class="sv" onclick="if(event.target===this)closeSpine()"><div class="cbar"><b class="svcap"></b></div>
+<div class="svstage"><div class="svport"><img alt=""><div class="svbox"></div></div></div>
+<div class="cbar"><button type="button" onclick="turnSpine()">Turn to read ↺</button>
+<button type="button" onclick="closeSpine()">Close</button></div></div>
 <div id="crop" class="crop"><div class="cbar"><b class="ctitle"></b> · <span id="cropsize"></span></div>
 <div class="stage"><canvas></canvas><div class="sel"></div></div>
 <div class="cbar"><button type="button" onclick="rotateCrop()">Rotate ↻</button>
@@ -796,7 +948,8 @@ def bookmarklet() -> str:
     """The "Add to bookshelf" bookmark: on any page, sends the largest web image
     (and the page it is linked from, when that is not Google) to this review
     page, which saves it to Downloads with its source. Opens a small window, so
-    it is a plain navigation, not a cross-site request."""
+    it is a plain navigation, not a cross-site request. When used in the Google
+    side window the review page opened, it closes that window afterwards."""
     js = ("(()=>{let b=null,a=0;for(const i of document.images){const s=i.currentSrc||i.src;"
           "if(!/^https?:/.test(s))continue;const r=i.getBoundingClientRect();const v=r.width*r.height;"
           "if(v>a&&r.width>60&&r.height>60){a=v;b=i}}"
@@ -805,7 +958,8 @@ def bookmarklet() -> str:
           "if(l&&!/(^|\\.)google\\./.test(l.hostname))p=l.href;"
           f"window.open('http://127.0.0.1:{PORT}/grab?k={local_images.grab_key()}"
           "&img='+encodeURIComponent(b.currentSrc||b.src)+'&page='+encodeURIComponent(p),"
-          "'vbgrab','width=480,height=420')})()")
+          "'vbgrab','width=480,height=420');"
+          "if(window.name==='vbgoogle')setTimeout(()=>window.close(),600)})()")
     return "javascript:" + js
 
 
@@ -897,7 +1051,8 @@ class H(BaseHTTPRequestHandler):
                 return self.send(404, "not found", "text/plain")
         if u.path.startswith("/photo/"):
             name = Path(u.path).name
-            f = PHOTOS / f"{name}_small.jpg"
+            full = PHOTOS / f"{name}.jpg"
+            f = full if parse_qs(u.query).get("full") == ["1"] and full.exists() else PHOTOS / f"{name}_small.jpg"
             if f.parent == PHOTOS and f.exists():
                 return self.send(200, f.read_bytes(), "image/jpeg")
         self.send(404, "not found", "text/plain")

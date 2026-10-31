@@ -5,6 +5,14 @@ This is the dated log of work and results. What exists and how it works is in
 
 ## Latest (Oct 31)
 
+- **Spines outlined, auto-crop, Google in a side window.** The review card
+  outlines the book's spine on its shelf photo (from `data/spines.csv`) and
+  opens just that spine on click, with **Turn to read**. Downloaded images are
+  cropped automatically (margins trimmed; one spine picked out of several) —
+  accept with Save these. Google Images opens in a side window that the
+  bookmark closes after sending. **Import shelf photos** brings the Drive
+  photos onto the Mac; outlining all 521 spines is next. 73 tests.
+
 - **No more Terminal for updates.** The review page shows a banner when a new
   version is on GitHub; **Update & restart** brings it in (keeping
   unpublished review data) and restarts the page in place. **Restart** is
