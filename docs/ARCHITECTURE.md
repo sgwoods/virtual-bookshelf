@@ -114,8 +114,10 @@ zoom. Where `data/spines.csv` has an outline for the book (`row_id,x0,y0,x1,y1`,
 fractions of the photo), the spine is **outlined** on the photo; clicking the
 outline opens just that spine, enlarged with its neighbours for context, and
 **Turn to read** lays it on its side. **Import shelf photos** (pipeline step
-`import_photos`) takes the Drive folder's "Download all" zip from Downloads,
-unpacks it to `photos/raw/` and converts each photo with macOS `sips` to
+`import_photos`) finds the shelf photos in Downloads — in the Drive folder's
+"Download all" zip, in an unzipped folder, or loose — taking only the 31 names
+listed in `data/drive_files.tsv`, so no other pictures in Downloads are
+touched; copies them to `photos/raw/` and converts each with macOS `sips` to
 `photos/jpg/NAME.jpg` and `NAME_small.jpg`; `photos/` stays git-ignored.
 
 **Google Images** opens in a side window (`window.open` named `vbgoogle`)
