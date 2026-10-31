@@ -35,6 +35,7 @@ from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pipeline                                    # noqa: E402
+import resolve                                     # noqa: E402
 from resolve import clean_title, norm              # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -147,19 +148,36 @@ h1{font:600 19px/1 Georgia,serif;margin:0}.count{color:var(--mute)}
 .bar i{display:block;height:100%;background:var(--acc)}
 main{max-width:1100px;margin:0 auto;padding:16px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin:0 0 14px;
-display:grid;grid-template-columns:260px 1fr;gap:18px;transition:opacity .25s}
+display:grid;grid-template-columns:300px 1fr;gap:20px;transition:opacity .25s}
 .card.done{opacity:.35}
-@media (max-width:760px){.card{grid-template-columns:1fr}}
+@media (max-width:820px){.card{grid-template-columns:1fr}}
 .read h2{font:600 17px/1.25 Georgia,serif;margin:0 0 4px}.read .by{color:var(--mute);margin-bottom:8px}
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}.chip{background:var(--chip);border-radius:99px;
 padding:2px 9px;font-size:12px;color:var(--mute)}.chip.low,.chip.none{color:var(--bad)}
 .chip.medium,.chip.weak{color:var(--warn)}.chip.skipped{color:var(--mute)}
 .note{font-size:13px;color:var(--mute)}a{color:var(--acc)}
-.cands{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
-.cand{border:1px solid var(--line);border-radius:8px;padding:8px;display:flex;gap:8px;flex-direction:column}
-.cand .cv{display:flex;gap:8px}.cand img,.cand .ph{width:52px;height:78px;object-fit:cover;border-radius:3px;
-background:var(--chip);flex:none}.cand b{font-size:13px;line-height:1.25;display:block}
+.cands{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px;align-content:start}
+.cand{border:1px solid var(--line);border-radius:8px;padding:10px;display:flex;gap:8px;flex-direction:column}
+.cand .cover{width:100%;aspect-ratio:2/3;max-height:260px;border-radius:4px;background:var(--chip);
+object-fit:contain;cursor:zoom-in;display:block}
+.cand .ph{width:100%;height:90px;border-radius:4px;background:var(--chip);display:flex;
+align-items:center;justify-content:center;color:var(--mute);font-size:12px}
+.cand b{font-size:14px;line-height:1.25;display:block}
 .cand small{color:var(--mute);font-size:12px;display:block}.sc{font-size:11px;color:var(--mute)}
+.cand .row{display:flex;gap:6px}.cand .row button{flex:1}
+.cands .more{grid-column:1/-1;font-size:13px;color:var(--mute);margin:0}
+.shelf{margin:10px 0 4px}.shelf img{width:100%;max-height:230px;object-fit:contain;border-radius:6px;
+background:var(--chip);cursor:zoom-in;display:block}.shelf .cap{font-size:12px;color:var(--mute);margin-top:4px}
+form.more,form.details,form.edit{display:none;flex-direction:column;gap:6px;margin-top:8px}
+form.more.open,form.details.open,form.edit.open{display:flex}
+form.more input,form.details input,form.edit input{font:inherit;font-size:13px;padding:5px 8px;
+border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink)}
+.lb{position:fixed;inset:0;z-index:10;background:rgba(0,0,0,.82);display:none;align-items:center;
+justify-content:center;overflow:auto;cursor:zoom-out}.lb.open{display:flex}
+.lb img{max-width:96vw;max-height:94vh;object-fit:contain;cursor:zoom-in;background:#222}
+.lb.zoom{align-items:flex-start;justify-content:flex-start}.lb.zoom img{max-width:none;max-height:none;cursor:zoom-out}
+.lb .lbcap{position:fixed;left:0;right:0;bottom:0;padding:8px 14px;color:#eee;font-size:13px;
+background:rgba(0,0,0,.55);pointer-events:none}
 button{font:inherit;font-size:13px;border:1px solid var(--line);background:var(--chip);color:var(--ink);
 border-radius:6px;padding:5px 10px;cursor:pointer}button:hover{border-color:var(--acc)}
 button.primary{background:var(--acc);color:var(--card);border-color:var(--acc)}
@@ -196,12 +214,81 @@ async function post(path, data, card){
   const n=document.querySelectorAll('.card:not(.done)').length, t=document.querySelectorAll('.card').length;
   document.getElementById('left').textContent=n; document.querySelector('.bar i').style.width=(100*(t-n)/t)+'%';
 }
-function decide(btn,decision,pick){const c=btn.closest('.card');
-  post('/decide',{row_id:c.dataset.id,decision,pick_json:pick?JSON.stringify(pick):'',label:btn.textContent.trim()},c)}
-function pick(btn){decide(btn,'pick',JSON.parse(btn.dataset.cand))}
+function decide(btn,decision,pick,label){const c=btn.closest('.card');
+  post('/decide',{row_id:c.dataset.id,decision,pick_json:pick?JSON.stringify(pick):'',label:label||btn.textContent.trim()},c)}
 function toggleFix(btn){btn.closest('.card').querySelector('form.fix').classList.toggle('open')}
 function fix(ev,form){ev.preventDefault();const c=form.closest('.card');
   post('/edit',{row_id:c.dataset.id,title:form.title.value,author:form.author.value,label:'corrected'},c)}
+
+/* ---- candidates: drawn here for both the first lookup and Search harder ---- */
+function big(url){return (url||'').replace('-M.jpg','-L.jpg').replace('zoom=1','zoom=0')}
+function el(tag, attrs, text){const e=document.createElement(tag);
+  for(const k in (attrs||{})) e.setAttribute(k, attrs[k]); if(text!=null) e.textContent=text; return e}
+function tile(c, first){
+  const t=el('div',{class:'cand'});
+  if(c.cover_url){const im=el('img',{class:'cover',loading:'lazy',src:c.cover_url,alt:''});
+    im.onclick=()=>lightbox(big(c.cover_url), c.title+' — '+c.author);
+    im.onerror=()=>im.replaceWith(el('div',{class:'ph'},'no cover'));
+    t.append(im)} else t.append(el('div',{class:'ph'},'no cover'));
+  t.append(el('b',null,c.title), el('small',null,c.author),
+    el('small',null,[c.year,c.isbn?'ISBN '+c.isbn:'',c.source].filter(Boolean).join(' · ')),
+    el('span',{class:'sc'},'score '+Number(c.score||0).toFixed(2)));
+  const row=el('div',{class:'row'});
+  const use=el('button',first?{class:'primary'}:{},'Use this');
+  use.onclick=()=>decide(use,'pick',c);
+  const ed=el('button',{title:'Fix the title, author, year or ISBN, then use it'},'Edit & use…');
+  ed.onclick=()=>f.classList.toggle('open');
+  row.append(use, ed); t.append(row);
+  const f=el('form',{class:'edit'});
+  for(const [k,label] of [['title','title'],['author','author'],['year','year'],['isbn','ISBN']]){
+    const i=el('input',{name:k,placeholder:label}); i.value=c[k]||''; f.append(i)}
+  const sv=el('button',{class:'primary'},'Save'); f.append(sv);
+  f.onsubmit=ev=>{ev.preventDefault();
+    const e=Object.assign({},c,{title:f.title.value,author:f.author.value,year:f.year.value,isbn:f.isbn.value,edited:true});
+    decide(sv,'pick',e,'picked (edited)')};
+  t.append(f);
+  return t;
+}
+function drawCands(box, list, note){
+  box.replaceChildren();
+  if(note) box.append(el('p',{class:'more'},note));
+  if(!list.length){box.append(el('p',{class:'note'},'No candidates found.'));return}
+  list.forEach((c,i)=>box.append(tile(c,i===0)));
+}
+document.querySelectorAll('.cands').forEach(b=>drawCands(b, JSON.parse(b.dataset.cands||'[]')));
+
+function toggle(btn, cls){btn.closest('.card').querySelector('form.'+cls).classList.toggle('open')}
+async function searchMore(btn, own){
+  const card=btn.closest('.card'), f=card.querySelector('form.more'), box=card.querySelector('.cands');
+  f.classList.add('open');
+  const q=own?f.q.value:'', isbn=own?f.isbn.value:'';
+  const label=btn.textContent; btn.disabled=true; btn.textContent='Searching…';
+  try{
+    const r=await api('/search',{row_id:card.dataset.id,q,isbn});
+    if(!r.ok){alert(await r.text());return}
+    const found=await r.json();
+    const old=JSON.parse(box.dataset.cands||'[]');
+    const key=c=>c.work_id||c.gb_id||(c.title+'|'+c.author);
+    const seen=new Set(found.map(key));
+    const all=found.concat(old.filter(c=>!seen.has(key(c))));
+    box.dataset.cands=JSON.stringify(all);
+    drawCands(box, all, found.length+' found by '+(isbn?'ISBN':q?'your search':'a wider search')+
+      ' (best first); earlier candidates follow.');
+  } finally {btn.disabled=false; btn.textContent=label}
+}
+function details(ev, f){ev.preventDefault();
+  const d={title:f.title.value,author:f.author.value,year:f.year.value,publisher:f.publisher.value,isbn:f.isbn.value};
+  decide(f.querySelector('button'),'no-match',d,'not listed (details saved)')}
+
+/* ---- lightbox ---- */
+function lightbox(src, cap){
+  const lb=document.getElementById('lb'); lb.classList.remove('zoom');
+  lb.querySelector('img').src=src; lb.querySelector('.lbcap').textContent=cap||'';
+  lb.classList.add('open')}
+document.addEventListener('keydown',e=>{if(e.key==='Escape')document.getElementById('lb').classList.remove('open')});
+function lbClick(e){const lb=document.getElementById('lb');
+  if(e.target.tagName==='IMG'){lb.classList.toggle('zoom');return}
+  lb.classList.remove('open')}
 
 /* ---- actions bar ---- */
 const CONFIRM = {
@@ -240,6 +327,27 @@ fetch('/job').then(r=>r.json()).then(j=>{if(j.running){openLog();poll()}});
 def esc(s): return html.escape(str(s or ""), quote=True)
 
 
+def shelf_photo(b, drive):
+    """The shelf photo this book was read from: a local copy if there is one,
+    otherwise Drive's thumbnail (shown because the browser is signed in to
+    Google; the photos themselves stay private in Drive)."""
+    photo = b["photo"]
+    if (PHOTOS / f"{photo}_small.jpg").exists():
+        small = big = f"/photo/{photo}"
+    elif photo in drive:
+        fid = drive[photo]
+        small = f"https://drive.google.com/thumbnail?id={fid}&sz=w900"
+        big = f"https://drive.google.com/thumbnail?id={fid}&sz=w4000"
+    else:
+        return ""
+    where = f"{b['stack']} stack, #{b['position']}" if b["stack"] not in ("shelf", "") else f"#{b['position']} on the shelf"
+    cap = f"{photo} — this book is {where}"
+    return (f'<div class="shelf"><img loading="lazy" src="{esc(small)}" alt="shelf photo {esc(photo)}" '
+            f'onclick="lightbox(&#39;{esc(big)}&#39;, &#39;{esc(cap)}&#39;)" '
+            f'onerror="this.parentNode.querySelector(&#39;.cap&#39;).textContent=&#39;Shelf photo not available here — {esc(photo)}&#39;;this.remove()">'
+            f'<div class="cap">{esc(cap)} · click to enlarge, click again to zoom</div></div>')
+
+
 def photo_link(photo, drive):
     if (PHOTOS / f"{photo}_small.jpg").exists():
         return f'<a href="/photo/{esc(photo)}" target="_blank">view photo</a>'
@@ -252,13 +360,6 @@ def card(b, r, ov, drive, check=False):
     rid_ = rid(b)
     status = (r or {}).get("status") or "unresolved"
     cands = json.loads((r or {}).get("candidates") or "[]")
-    cand_html = "".join(f"""
-      <div class="cand"><div class="cv">
-        {f'<img loading="lazy" src="{esc(c["cover_url"])}" alt="" onerror="this.outerHTML=&#39;<div class=ph></div>&#39;">' if c.get("cover_url") else '<div class="ph"></div>'}
-        <div><b>{esc(c["title"])}</b><small>{esc(c["author"])}</small>
-        <small>{esc(c["year"])} · {esc(c["source"])}</small><span class="sc">score {c["score"]:.2f}</span></div></div>
-        <button {'class="primary"' if i == 0 else ''} data-cand="{esc(json.dumps(c))}" onclick="pick(this)">Use this</button>
-      </div>""" for i, c in enumerate(cands)) or '<p class="note">No candidates found.</p>'
     done = ""
     if ov:
         done = f'✓ already decided: {esc(ov["decision"])} ({esc(ov["decided_at"])})'
@@ -272,11 +373,15 @@ def card(b, r, ov, drive, check=False):
     {f'<div class="note">matched to <b>{esc(r.get("match_title"))}</b> · {esc(r.get("match_author"))} {esc(r.get("year"))}</div>' if check else ''}
     <div class="note">{esc(b['photo'])} · {esc(b['stack'])} #{esc(b['position'])} · {photo_link(b['photo'], drive)}</div>
     {f'<div class="note">{esc(b["notes"])}</div>' if b["notes"] else ''}
+    {shelf_photo(b, drive)}
     <div class="acts">
       {(f'<button {"class=primary " if check else ""}onclick="decide(this,&#39;accept&#39;)" '
         f'title="The current best match is the right book">{"Looks right" if check else "Best guess is right"}</button>')
        if cands else ''}
+      <button onclick="searchMore(this,false)" title="Wider searches with more results">Search harder</button>
+      <button onclick="toggle(this,'more')">Search by text or ISBN…</button>
       <button onclick="decide(this,'no-match')" title="Real book, just not in Open Library">Not listed — keep as read</button>
+      <button onclick="toggle(this,'details')">Not listed — add details…</button>
       <button onclick="decide(this,'not-a-book')">Not a book</button>
       <button onclick="toggleFix(this)">Fix spine read…</button>
       {'<button onclick="decide(this,&#39;undo&#39;)">Undo</button>' if ov else ''}
@@ -285,9 +390,20 @@ def card(b, r, ov, drive, check=False):
       <input name="title" value="{esc(b['title'])}" placeholder="title">
       <input name="author" value="{esc(b['author'])}" placeholder="author">
       <button class="primary">Save</button></form>
+    <form class="more" onsubmit="event.preventDefault();searchMore(this.querySelector('button'),true)">
+      <input name="q" value="{esc(clean_title(b['title']) + ' ' + resolve.first_author(b['author']))}" placeholder="your own search">
+      <input name="isbn" placeholder="ISBN from the back cover (surest)" inputmode="numeric">
+      <button class="primary">Search</button></form>
+    <form class="details" onsubmit="details(event,this)">
+      <input name="title" value="{esc(b['title'])}" placeholder="title">
+      <input name="author" value="{esc(b['author'])}" placeholder="author">
+      <input name="year" placeholder="year">
+      <input name="publisher" placeholder="publisher">
+      <input name="isbn" placeholder="ISBN">
+      <button class="primary">Save as not listed</button></form>
     <div class="decided">{done}</div>
   </div>
-  <div class="cands">{cand_html}</div>
+  <div class="cands" data-cands="{esc(json.dumps(cands))}"></div>
 </section>"""
 
 
@@ -334,6 +450,7 @@ def page():
 <a href="/?all={'0' if SHOW_ALL else '1'}">{'queue only' if SHOW_ALL else 'show all books'}</a>
 {tools_bar()}</header>
 {hint}<main>{body}</main>
+<div id="lb" class="lb" onclick="lbClick(event)"><img alt=""><div class="lbcap"></div></div>
 <div id="log"><div class="lh"><b>Actions</b><span id="jobstate"></span>
 <button onclick="closeLog()">Hide</button></div><pre id="logtext"></pre></div>
 <script>{JS}</script></body></html>"""
@@ -414,6 +531,11 @@ class H(BaseHTTPRequestHandler):
             if self.path == "/run":
                 why = start_job(str(data.get("action", "")))
                 return self.send(409 if why else 200, why or "started", "text/plain")
+            if self.path == "/search":
+                books = {rid(b): b for b in csv.DictReader(open(BOOKS, encoding="utf-8"))}
+                row = books[data["row_id"]]
+                found = resolve.search_more(row, str(data.get("q", "")), str(data.get("isbn", "")))
+                return self.send(200, json.dumps(found), "application/json")
             if self.path == "/decide":
                 if data["decision"] not in ("pick", "accept", "no-match", "not-a-book", "undo"):
                     raise ValueError("bad decision")

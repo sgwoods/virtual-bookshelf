@@ -82,3 +82,65 @@ class Normalising(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SearchHarder(unittest.TestCase):
+    """search_more() and the decisions it feeds, with the network stubbed out."""
+
+    def setUp(self):
+        self.calls = []
+        self._ol, self._gb = R.ol_search, R.gb_search
+
+        def ol(**p):
+            self.calls.append(("ol", p))
+            if p.get("q", "").startswith("isbn:"):
+                return [{"key": "/works/OL1W", "title": "Wake", "author_name": ["Robert J. Sawyer"],
+                         "first_publish_year": 2009, "isbn": ["9780441016792"], "cover_i": 1}]
+            return [{"key": "/works/OL2W", "title": "The Wake", "author_name": ["Neil Gaiman"]},
+                    {"key": "/works/OL1W", "title": "Wake", "author_name": ["Robert J. Sawyer"],
+                     "first_publish_year": 2009}]
+
+        def gb(title, author, q="", n=5):
+            self.calls.append(("gb", q))
+            return []
+        R.ol_search, R.gb_search = ol, gb
+        self.row = {"title": "Wake", "author": "Robert J. Sawyer"}
+
+    def tearDown(self):
+        R.ol_search, R.gb_search = self._ol, self._gb
+
+    def test_wider_search_ranks_the_right_book_first(self):
+        out = R.search_more(self.row)
+        self.assertEqual(out[0]["work_id"], "/works/OL1W")
+        self.assertEqual(len({c["work_id"] for c in out}), len(out), "duplicates removed")
+        self.assertTrue(all(p.get("limit") == 20 for kind, p in self.calls if kind == "ol"))
+
+    def test_isbn_is_looked_up_directly(self):
+        out = R.search_more(self.row, isbn="978-0-441-01679-2")
+        self.assertIn(("ol", {"q": "isbn:9780441016792"}), self.calls)
+        self.assertIn(("gb", "isbn:9780441016792"), self.calls)
+        self.assertEqual(out[0]["isbn"], "9780441016792")
+
+    def test_own_text_is_searched_as_typed(self):
+        R.search_more(self.row, q="wake www trilogy")
+        self.assertEqual([p for k, p in self.calls if k == "ol"], [{"q": "wake www trilogy", "limit": 20}])
+
+    def test_edited_pick_wins(self):
+        pick = {"source": "openlibrary", "work_id": "/works/OL9W", "title": "Children of the Lens",
+                "author": "E. E. Smith", "year": "1954", "isbn": "123", "cover_url": "u"}
+        rec = R.apply_override({"status": "matched", "year": "2017"},
+                               {"decision": "pick", "pick_json": R.json.dumps(pick)})
+        self.assertEqual((rec["status"], rec["year"], rec["isbns"]), ("confirmed", "1954", "123"))
+
+    def test_not_listed_keeps_typed_details(self):
+        d = {"title": "Arena: The Art of Hockey", "author": "Art Gallery of Nova Scotia", "year": "2008",
+             "publisher": "AGNS", "isbn": ""}
+        rec = R.apply_override({"status": "weak", "work_id": "/works/X", "cover_url": "c"},
+                               {"decision": "no-match", "pick_json": R.json.dumps(d)})
+        self.assertEqual(rec["status"], "confirmed-unlisted")
+        self.assertEqual((rec["match_title"], rec["year"], rec["work_id"], rec["cover_url"]),
+                         ("Arena: The Art of Hockey", "2008", "", ""))
+
+    def test_not_listed_without_details_still_works(self):
+        rec = R.apply_override({"status": "weak", "match_title": "X"}, {"decision": "no-match", "pick_json": ""})
+        self.assertEqual((rec["status"], rec["match_title"]), ("confirmed-unlisted", ""))
