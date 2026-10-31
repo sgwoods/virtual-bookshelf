@@ -84,6 +84,24 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class CacheKeys(unittest.TestCase):
+    """data/cache/ is keyed on the request URL, so its shape must not drift."""
+
+    def test_open_library_url_is_unchanged(self):
+        seen = []
+        real = R.get_json
+        R.get_json = lambda url: seen.append(url) or {}
+        try:
+            R.ol_search(title="Dune", author="Frank Herbert")
+            R.ol_search(q="Dune herbert")
+        finally:
+            R.get_json = real
+        self.assertEqual(seen, [
+            "https://openlibrary.org/search.json?title=Dune&author=Frank+Herbert&limit=8&fields=" + R.urllib.parse.quote_plus(R.OL_FIELDS),
+            "https://openlibrary.org/search.json?q=Dune+herbert&limit=8&fields=" + R.urllib.parse.quote_plus(R.OL_FIELDS),
+        ])
+
+
 class SearchHarder(unittest.TestCase):
     """search_more() and the decisions it feeds, with the network stubbed out."""
 
@@ -91,7 +109,7 @@ class SearchHarder(unittest.TestCase):
         self.calls = []
         self._ol, self._gb = R.ol_search, R.gb_search
 
-        def ol(**p):
+        def ol(fields=None, **p):
             self.calls.append(("ol", p))
             if p.get("q", "").startswith("isbn:"):
                 return [{"key": "/works/OL1W", "title": "Wake", "author_name": ["Robert J. Sawyer"],

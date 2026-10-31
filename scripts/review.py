@@ -98,6 +98,17 @@ def subtitle_dropped(spine_title: str, match_title: str) -> bool:
     return len(sub) >= 4 and sub not in norm(clean_title(match_title))
 
 
+def auto_find(b, r, ov, check=False) -> bool:
+    """Should this card look further on its own when it scrolls into view?
+
+    Yes for undecided cards whose lookup is weak or found nothing; not for
+    quick checks (they already have a confident match) or unreadable spines
+    (there is nothing to search for)."""
+    status = (r or {}).get("status") or ""
+    return (not ov and not check and status in ("weak", "none")
+            and not b["title"].lower().startswith("unknown"))
+
+
 def quick_check(b, r):
     return (b["position"] != "0" and b["confidence"] in ("high", "checked")
             and (r or {}).get("status") == "matched"
@@ -231,7 +242,8 @@ function tile(c, first){
     im.onerror=()=>im.replaceWith(el('div',{class:'ph'},'no cover'));
     t.append(im)} else t.append(el('div',{class:'ph'},'no cover'));
   t.append(el('b',null,c.title), el('small',null,c.author),
-    el('small',null,[c.year,c.isbn?'ISBN '+c.isbn:'',c.source].filter(Boolean).join(' · ')),
+    el('small',null,[c.publisher,c.year].filter(Boolean).join(' · ')),
+    el('small',null,[c.isbn?'ISBN '+c.isbn:'',c.source].filter(Boolean).join(' · ')),
     el('span',{class:'sc'},'score '+Number(c.score||0).toFixed(2)));
   const row=el('div',{class:'row'});
   const use=el('button',first?{class:'primary'}:{},'Use this');
@@ -258,23 +270,49 @@ function drawCands(box, list, note){
 document.querySelectorAll('.cands').forEach(b=>drawCands(b, JSON.parse(b.dataset.cands||'[]')));
 
 function toggle(btn, cls){btn.closest('.card').querySelector('form.'+cls).classList.toggle('open')}
+async function findMore(card, q, isbn, how){
+  /* Ask the server for more candidates and merge them into the card's row, best first. */
+  const box=card.querySelector('.cands');
+  const old=JSON.parse(box.dataset.cands||'[]');
+  drawCands(box, old, 'Looking further…');
+  let found=[];
+  try{
+    const r=await api('/search',{row_id:card.dataset.id,q:q||'',isbn:isbn||''});
+    if(r.ok) found=await r.json();
+  } catch(e) {}
+  const key=c=>c.work_id||c.gb_id||(c.title+'|'+c.author);
+  const known=new Set(old.map(key));
+  const fresh=found.filter(c=>!known.has(key(c)));
+  const seen=new Set(found.map(key));
+  const all=found.concat(old.filter(c=>!seen.has(key(c))));
+  box.dataset.cands=JSON.stringify(all);
+  card.dataset.looked='1';
+  drawCands(box, all, fresh.length
+    ? fresh.length+' more found '+how+' — best first. Click Use this on the right one.'
+    : 'Looked further '+how+' — nothing new. If none of these is right, choose Not listed — keep as read.');
+}
 async function searchMore(btn, own){
-  const card=btn.closest('.card'), f=card.querySelector('form.more'), box=card.querySelector('.cands');
-  f.classList.add('open');
+  const card=btn.closest('.card'), f=card.querySelector('form.more');
+  if(own) f.classList.add('open');
   const q=own?f.q.value:'', isbn=own?f.isbn.value:'';
   const label=btn.textContent; btn.disabled=true; btn.textContent='Searching…';
-  try{
-    const r=await api('/search',{row_id:card.dataset.id,q,isbn});
-    if(!r.ok){alert(await r.text());return}
-    const found=await r.json();
-    const old=JSON.parse(box.dataset.cands||'[]');
-    const key=c=>c.work_id||c.gb_id||(c.title+'|'+c.author);
-    const seen=new Set(found.map(key));
-    const all=found.concat(old.filter(c=>!seen.has(key(c))));
-    box.dataset.cands=JSON.stringify(all);
-    drawCands(box, all, found.length+' found by '+(isbn?'ISBN':q?'your search':'a wider search')+
-      ' (best first); earlier candidates follow.');
-  } finally {btn.disabled=false; btn.textContent=label}
+  try{ await findMore(card, q, isbn, isbn?'by ISBN':q?'for your search':'with wider searches') }
+  finally {btn.disabled=false; btn.textContent=label}
+}
+
+/* Cards that need help look further on their own as you scroll to them, one at a time. */
+const autoQueue=[]; let autoBusy=false;
+async function autoNext(){
+  if(autoBusy) return;
+  const card=autoQueue.shift(); if(!card) return;
+  autoBusy=true;
+  try{ if(!card.classList.contains('done') && !card.dataset.looked) await findMore(card,'','','automatically') }
+  finally{ autoBusy=false; autoNext() }
+}
+if('IntersectionObserver' in window){
+  const io=new IntersectionObserver(es=>es.forEach(e=>{
+    if(e.isIntersecting){io.unobserve(e.target); autoQueue.push(e.target); autoNext()}}),{rootMargin:'400px 0px'});
+  document.querySelectorAll('section.card[data-auto]').forEach(c=>io.observe(c));
 }
 function details(ev, f){ev.preventDefault();
   const d={title:f.title.value,author:f.author.value,year:f.year.value,publisher:f.publisher.value,isbn:f.isbn.value};
@@ -374,7 +412,7 @@ def card(b, r, ov, drive, check=False):
     if ov:
         done = f'✓ already decided: {esc(ov["decision"])} ({esc(ov["decided_at"])})'
     return f"""
-<section class="card{' done' if ov else ''}" data-id="{esc(rid_)}">
+<section class="card{' done' if ov else ''}" data-id="{esc(rid_)}"{' data-auto' if auto_find(b, r, ov, check) else ''}>
   <div class="read">
     <h2>{esc(b['title'])}</h2><div class="by">{esc(b['author'])}</div>
     <div class="chips"><span class="chip {esc(b['confidence'])}">spine: {esc(b['confidence'])}</span>
