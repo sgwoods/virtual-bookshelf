@@ -91,14 +91,43 @@ Run modes: `python3 scripts/resolve.py` (new and changed rows; resumes),
 `--retry` (re-score weak and none rows from cache), `--refresh` (everything),
 `--limit N`, `--photo IMG_xxxx`.
 
-## 4. Review — `scripts/review.py`
+## 4. Review and everyday actions — `scripts/review.py`, `scripts/pipeline.py`
 
-A local page listing every row whose spine read is below high confidence or
-whose lookup is weak, none or skipped. Each card shows the spine read, a link
-to its shelf photo, and up to four candidates with covers. Decisions (use this
-/ not listed / not a book / fix the spine read) are written to
-`data/overrides.csv`, and spine corrections into `data/books.csv`; the next
-`python3 scripts/resolve.py` folds them into `data/resolved.csv`.
+`python3 scripts/review.py` serves a local page at `http://127.0.0.1:8765/`.
+
+**Cards.** First, every row whose spine read is below high confidence or whose
+lookup is weak, none or skipped. Then **quick checks**: confident matches whose
+title leaves out the spine's subtitle ("Manifold: Time" → "Manifold") — usually
+the same book, sometimes not (*Serenity: Better Days* is not *Serenity*), so a
+person decides; nothing is demoted automatically. Each card shows the spine
+read, a link to its shelf photo, and up to four candidates with covers.
+Decisions — use this candidate, best guess is right / looks right, not listed,
+not a book, fix the spine read — are written to `data/overrides.csv`, and
+spine corrections into `data/books.csv`.
+
+**Actions bar.** The header shows lookup counts, the git branch, the number of
+decisions and whether any data is not yet pushed, and buttons for the steps in
+`scripts/pipeline.py`, run one at a time with their output in a log panel:
+
+| button | step | what it does |
+|---|---|---|
+| Get latest | `update` | switch to `main` and fast-forward from GitHub; refuses while review data is unpublished |
+| Retry lookups | `retry` | `resolve.py --retry` (uses the network) |
+| Apply decisions | `apply` | `resolve.py`: fold `data/overrides.csv` into `data/resolved.csv` |
+| Rebuild site | `build` | `build_site.py`, then opens the preview at `/site/` |
+| Run tests | `test` | the unit tests |
+| Save & push | `save` | apply, then commit the data files on a `review-YYYYMMDD-HHMM` branch (never `main`) and push it; the log links to the pull request |
+| Finish | `finish` | apply → build → test → push, stopping at the first failure, then preview |
+
+The same steps run from Terminal: `python3 scripts/pipeline.py finish` (or
+`status`, `update`, `retry`, `apply`, `build`, `test`, `publish`, `save`).
+Publishing only ever adds `data/books.csv`, `data/resolved.csv` and
+`data/overrides.csv`.
+
+**Who can use it.** The server binds to 127.0.0.1 and answers only requests
+whose Host header is its own address; every POST must carry the per-session
+token embedded in the page. Another website open in the same browser therefore
+cannot record decisions or start a push.
 
 ## 5. The site and how it is published
 
@@ -145,6 +174,11 @@ Standard library `unittest`, no network:
   must not (*Dune* / *Dune Messiah*, same title by another author).
 - `tests/test_site.py` — every catalogued book is on the page, the data is
   embedded and well-formed, and no external scripts or stylesheets are loaded.
+- `tests/test_review.py` — the quick-check rule, that the page script parses,
+  and that requests without the token or from another host are refused.
+- `tests/test_pipeline.py` — against a throwaway repository with a local
+  origin: publishing goes to a review branch, commits only the data files and
+  never moves `main`; updating refuses over unpublished data.
 - `tests/test_docs.py` — this document against the tree.
 
 ## 7. Phase 1a tools

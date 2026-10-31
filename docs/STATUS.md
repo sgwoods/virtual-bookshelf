@@ -3,7 +3,23 @@
 This is the dated log of work and results. What exists and how it works is in
 [ARCHITECTURE.md](ARCHITECTURE.md); what comes next is in [ROADMAP.md](ROADMAP.md).
 
-## Latest (Oct 30, evening)
+## Latest (Oct 31)
+
+- **Review page is now the control panel.** Buttons for get latest, retry
+  lookups, apply decisions, rebuild and preview the site, run tests, save &
+  push (on a review branch, never `main`) and Finish (all of it in order);
+  the same steps from Terminal with `python3 scripts/pipeline.py finish`.
+  Requests need the page's per-session token, so other websites cannot use it.
+- **Quick checks:** 31 confident matches leave out the spine's subtitle; they
+  now appear after the main queue for a one-click "Looks right". Found by the
+  networked `--retry` on Oct 30, which lifted matches to 498 but matched
+  *Serenity: Better Days* to plain *Serenity*.
+- **Lookup now:** 498 matched · 11 weak · 6 none · 6 skipped (MacBook, after a
+  networked `--retry`; not yet pushed). Review: 3 decisions made so far.
+- Tests: 26 (added review-page guard and quick checks, publish/update git
+  steps against a throwaway repository, and a parse check of the page script).
+
+## Oct 30, evening
 
 **Full Open Library lookup run** (MacBook, all 521 items):
 

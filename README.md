@@ -37,8 +37,9 @@ scripts/
   report.py          counts, top authors, review queue from books.csv
   resolve.py         match each book on Open Library (Google Books fallback)
                      → data/resolved.csv
-  review.py          local review page: pick / not listed / not a book / fix
-                     → data/overrides.csv (and corrections into books.csv)
+  review.py          local review page and control panel: decisions →
+                     data/overrides.csv; buttons for the pipeline steps
+  pipeline.py        update / retry / apply / build / test / publish / finish
   build_site.py      cover-grid page → _site/index.html (git-ignored)
 site/
   template.html      the page design; build_site.py fills in the data
@@ -74,20 +75,32 @@ brew install ffmpeg            # only needed for heic2jpg.py; macOS can use sips
    To re-run or extend it, see ROADMAP → "Phase 1a tooling".
 4. **Check.** `python3 scripts/report.py --review`
 
-## Running the lookup and review (Phase 1b, steps 1–2)
+## Reviewing and publishing — one page
 
 Needs only the Python 3 that ships with macOS — no installs.
 
 ```bash
 cd ~/Developer/virtual-bookshelf
-git pull
-python3 scripts/resolve.py --limit 20     # 20-book trial, ~30 s (done Oct 30: 20/20 matched)
-python3 scripts/resolve.py                # the rest, ~10–15 min at 1 req/s (done Oct 30)
-python3 scripts/resolve.py --retry        # re-score weak/none rows after a scoring change
-python3 scripts/review.py                 # opens the review page in your browser
-python3 scripts/resolve.py                # folds your decisions in (instant, all cached)
-git add data && git commit -m "Lookup + review pass" && git push
+python3 scripts/review.py
 ```
+
+That opens the review page. Work through the cards, then use the buttons along
+the top: **Get latest** (pull from GitHub), **Retry lookups**, **Apply
+decisions**, **Rebuild site** (opens a preview), **Run tests**, **Save & push**
+(commits the data on a review branch and pushes it), or **Finish** — apply,
+rebuild, test and push in one go. The log at the bottom ends with the link to
+open the pull request; merging it on GitHub redeploys the site.
+
+The same steps without the page:
+
+```bash
+python3 scripts/pipeline.py finish
+```
+
+`python3 scripts/pipeline.py status` shows where things stand. The original
+one-off lookup commands were `python3 scripts/resolve.py --limit 20` (trial)
+and `python3 scripts/resolve.py` (full run); `--retry` re-runs weak and none
+rows after a scoring change.
 
 Status values in `resolved.csv`: `matched` (score ≥ 0.80), `weak` (0.55–0.80,
 goes to review), `none`, `skipped` (unknowns and theses — not looked up),

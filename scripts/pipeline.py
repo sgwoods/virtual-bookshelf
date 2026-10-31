@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+"""Everyday local actions, from the command line or the review page's buttons.
+
+Usage:
+    python3 scripts/pipeline.py status    # counts, branch, unpublished data
+    python3 scripts/pipeline.py update    # get the latest from GitHub (main)
+    python3 scripts/pipeline.py retry     # re-run weak/none lookups (uses the network)
+    python3 scripts/pipeline.py apply     # fold review decisions into data/resolved.csv
+    python3 scripts/pipeline.py build     # build the site into _site/
+    python3 scripts/pipeline.py test      # run the test suite
+    python3 scripts/pipeline.py publish   # commit data/ on a review branch and push it
+    python3 scripts/pipeline.py save      # apply, then publish
+    python3 scripts/pipeline.py finish    # apply → build → test → publish, then preview
+
+`finish` is the one command to run after a review session. It stops at the
+first step that fails and says why. `publish` never commits to main: it puts
+the data on a review-YYYYMMDD-HHMM branch (or the review branch you are on),
+pushes it, and prints the link to open the pull request. It only ever adds
+data/books.csv, data/resolved.csv and data/overrides.csv — never photos,
+credentials or data/reading.csv.
+
+Standard library only.
+"""
+from __future__ import annotations
+
+import csv, subprocess, sys
+from collections import Counter
+from datetime import datetime
+from pathlib import Path
+from typing import Callable
+
+ROOT = Path(__file__).resolve().parent.parent
+PY = sys.executable
+REPO_URL = "https://github.com/sgwoods/virtual-bookshelf"
+DATA_FILES = ("data/books.csv", "data/resolved.csv", "data/overrides.csv")
+Log = Callable[[str], None]
+
+
+# ---------------------------------------------------------------- helpers
+def run(cmd: list[str], log: Log) -> bool:
+    """Run a command in the repo, streaming its output to log. True if it succeeded."""
+    log("$ " + " ".join(c if " " not in c else repr(c) for c in cmd))
+    try:
+        p = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                             text=True, bufsize=1)
+    except OSError as e:
+        log(f"could not start: {e}")
+        return False
+    with p.stdout:
+        for line in p.stdout:
+            log(line.rstrip("\n"))
+    return p.wait() == 0
+
+
+def git(*args: str) -> str:
+    """Quiet git query; returns stdout ('' on failure)."""
+    r = subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def branch() -> str:
+    return git("rev-parse", "--abbrev-ref", "HEAD")
+
+
+def data_changes() -> list[str]:
+    """Data files with uncommitted changes (modified or new)."""
+    out = git("status", "--porcelain", "--", *DATA_FILES)
+    return [line[3:] for line in out.splitlines() if line.strip()]
+
+
+def review_branch_name(now: datetime | None = None) -> str:
+    return f"review-{(now or datetime.now()):%Y%m%d-%H%M}"
+
+
+def compare_url(br: str) -> str:
+    return f"{REPO_URL}/compare/main...{br}?expand=1"
+
+
+def status() -> dict:
+    """Numbers for the review page header and `pipeline.py status`."""
+    res = ROOT / "data/resolved.csv"
+    ov = ROOT / "data/overrides.csv"
+    lookup = Counter(r.get("status") or "?" for r in csv.DictReader(open(res, encoding="utf-8"))) if res.exists() else Counter()
+    decisions = sum(1 for _ in csv.DictReader(open(ov, encoding="utf-8"))) if ov.exists() else 0
+    return {"lookup": dict(lookup), "decisions": decisions, "branch": branch(),
+            "unpublished": data_changes()}
+
+
+# ---------------------------------------------------------------- actions
+def update(log: Log) -> bool:
+    """Switch to main and fast-forward it from GitHub."""
+    changes, br = data_changes(), branch()
+    if changes:
+        log(f"Not updating: review data not yet published on '{br}': {', '.join(changes)}.")
+        log("Publish it first (Save & push), then update.")
+        return False
+    if br != "main" and not run(["git", "switch", "main"], log):
+        return False
+    return run(["git", "pull", "--ff-only"], log)
+
+
+def retry(log: Log) -> bool:
+    return run([PY, "scripts/resolve.py", "--retry"], log)
+
+
+def apply(log: Log) -> bool:
+    return run([PY, "scripts/resolve.py"], log)
+
+
+def build(log: Log) -> bool:
+    return run([PY, "scripts/build_site.py"], log)
+
+
+def test(log: Log) -> bool:
+    return run([PY, "-m", "unittest", "discover", "-s", "tests"], log)
+
+
+def publish(log: Log, message: str = "") -> bool:
+    """Commit the data files on a review branch and push it."""
+    changes = data_changes()
+    if not changes:
+        log("Nothing to publish: no changes in " + ", ".join(DATA_FILES) + ".")
+        return True
+    br = branch()
+    if br in ("main", "HEAD", ""):
+        br = review_branch_name()
+        if not run(["git", "switch", "-c", br], log):
+            return False
+    s = status()
+    lk = s["lookup"]
+    message = message or (f"Review pass: {s['decisions']} decisions; "
+                          f"matched {lk.get('matched', 0)}, confirmed {lk.get('confirmed', 0)}, "
+                          f"weak {lk.get('weak', 0)}, none {lk.get('none', 0)}")
+    files = [f for f in DATA_FILES if (ROOT / f).exists()]
+    ok = (run(["git", "add", "--", *files], log)
+          and run(["git", "commit", "-m", message, "--", *files], log)
+          and run(["git", "push", "-u", "origin", br], log))
+    if ok:
+        log("")
+        log("Pushed. Open the pull request here:")
+        log(compare_url(br))
+    return ok
+
+
+def preview(log: Log) -> bool:
+    page = ROOT / "_site/index.html"
+    if sys.platform == "darwin" and page.exists():
+        return run(["open", str(page)], log)
+    log(f"Preview: {page}")
+    return True
+
+
+STEPS: dict[str, Callable[[Log], bool]] = {
+    "update": update, "retry": retry, "apply": apply, "build": build,
+    "test": test, "publish": publish,
+}
+
+
+def finish(log: Log) -> bool:
+    """apply → build → test → publish, stopping at the first failure; then preview."""
+    for name in ("apply", "build", "test", "publish"):
+        log(f"\n== {name}")
+        if not STEPS[name](log):
+            log(f"\nStopped: '{name}' failed. Nothing after it ran.")
+            return False
+    preview(log)
+    log("\nDone.")
+    return True
+
+
+def save(log: Log) -> bool:
+    """apply → publish: fold decisions in, then commit and push the data."""
+    return apply(log) and publish(log)
+
+
+STEPS["finish"] = finish
+STEPS["save"] = save
+
+
+def main():
+    if len(sys.argv) != 2 or sys.argv[1] not in (*STEPS, "status"):
+        print(__doc__)
+        sys.exit(2)
+    if sys.argv[1] == "status":
+        s = status()
+        print(f"branch: {s['branch']}")
+        print("lookup: " + "  ".join(f"{k} {v}" for k, v in sorted(s["lookup"].items())))
+        print(f"review decisions: {s['decisions']}")
+        print("unpublished data: " + (", ".join(s["unpublished"]) or "none"))
+        return
+    sys.exit(0 if STEPS[sys.argv[1]](print) else 1)
+
+
+if __name__ == "__main__":
+    main()
