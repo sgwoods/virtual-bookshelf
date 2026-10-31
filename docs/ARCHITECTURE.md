@@ -110,7 +110,17 @@ also shows the **shelf photo** the book was read from, labelled with its stack
 and position — a local copy from `photos/` if present, otherwise Drive's
 thumbnail of the private photo (it loads because the browser is signed in to
 Google; nothing is downloaded or published). Click to enlarge, click again to
-zoom.
+zoom. Where `data/spines.csv` has an outline for the book (`row_id,x0,y0,x1,y1`,
+fractions of the photo), the spine is **outlined** on the photo; clicking the
+outline opens just that spine, enlarged with its neighbours for context, and
+**Turn to read** lays it on its side. **Import shelf photos** (pipeline step
+`import_photos`) takes the Drive folder's "Download all" zip from Downloads,
+unpacks it to `photos/raw/` and converts each photo with macOS `sips` to
+`photos/jpg/NAME.jpg` and `NAME_small.jpg`; `photos/` stays git-ignored.
+
+**Google Images** opens in a side window (`window.open` named `vbgoogle`)
+rather than a tab — Google does not allow itself to be framed inside another
+page — and the bookmark closes that window after sending a picture.
 
 Each card also links to a **Google Images** search for the spine read, opened
 in a new tab for a person to look at: seller photos often show the ISBN,
@@ -128,7 +138,11 @@ listed — keep as read**. Nothing needs typing.
 its cover or spine. After you click a card's Google Images link and come back,
 that card shows the images downloaded since; **Add downloaded images** shows
 any from the last few hours. Each is guessed as Cover or Spine by its shape
-(click to change, or Skip) and opens in a **cropper**: drag a box around just
+(click to change, or Skip) and is **cropped automatically**: plain margins are
+trimmed, and a spine picture showing several books is split at full-height
+dividing lines or gaps and one spine kept (the one at the centre, else the
+widest). Accepting is just Save these; otherwise it opens in a **cropper**,
+starting from the suggestion: drag a box around just
 this book — one spine out of a photo of several, or just the cover — and
 rotate in quarter turns. Saving moves the file out of Downloads into
 `images/<row id>/`: `cover.jpg` / `spine.jpg` (the crop) beside

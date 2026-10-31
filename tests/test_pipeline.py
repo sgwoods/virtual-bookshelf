@@ -123,6 +123,30 @@ class Publish(unittest.TestCase):
         self.assertEqual(pipeline.branch(), "main")
         self.assertTrue((self.work / "new.txt").exists())
 
+    def test_import_shelf_photos_from_a_drive_download(self):
+        import os, zipfile
+        dl = self.tmp / "Downloads"
+        dl.mkdir()
+        os.environ["VB_DOWNLOADS"] = str(dl)
+        self.addCleanup(os.environ.pop, "VB_DOWNLOADS", None)
+        with zipfile.ZipFile(dl / "drive-download-20261031.zip", "w") as z:
+            z.writestr("Bookshelf/IMG_8879.jpg", b"\xff\xd8one")
+            z.writestr("Bookshelf/IMG_8880.JPG", b"\xff\xd8two")
+            z.writestr("Bookshelf/notes.txt", b"not a photo")
+        self.assertTrue(pipeline.import_photos(self.log.append))
+        names = sorted(p.name for p in (self.work / "photos/jpg").iterdir())
+        if not shutil.which("sips"):          # Linux CI: JPEGs are copied as they are
+            self.assertEqual(names, ["IMG_8879.jpg", "IMG_8879_small.jpg", "IMG_8880.jpg", "IMG_8880_small.jpg"])
+        self.assertFalse((self.work / "photos/raw/notes.txt").exists())
+
+    def test_import_says_what_to_do_when_nothing_is_there(self):
+        import os
+        (self.tmp / "Empty").mkdir()
+        os.environ["VB_DOWNLOADS"] = str(self.tmp / "Empty")
+        self.addCleanup(os.environ.pop, "VB_DOWNLOADS", None)
+        self.assertFalse(pipeline.import_photos(self.log.append))
+        self.assertIn("Download all", "\n".join(self.log))
+
     def test_update_refuses_over_unpublished_data(self):
         (self.work / "data/resolved.csv").write_text("a,b\n9,9\n")
         self.assertFalse(pipeline.update(self.log.append))
