@@ -28,12 +28,13 @@ so other websites open in the browser cannot drive these actions.
 """
 from __future__ import annotations
 
-import argparse, csv, html, json, secrets, sys, threading, time, webbrowser
+import argparse, base64, csv, html, json, secrets, sys, threading, time, webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, quote_plus, urlparse
+from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import local_images                                # noqa: E402
 import pipeline                                    # noqa: E402
 import resolve                                     # noqa: E402
 from resolve import clean_title, norm              # noqa: E402
@@ -183,6 +184,23 @@ form.more,form.details,form.edit{display:none;flex-direction:column;gap:6px;marg
 form.more.open,form.details.open,form.edit.open{display:flex}
 form.more input,form.details input,form.edit input{font:inherit;font-size:13px;padding:5px 8px;
 border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink)}
+.own{display:flex;gap:10px;margin:10px 0 2px;flex-wrap:wrap}.own figure{margin:0;font-size:12px;color:var(--mute)}
+.own img{height:120px;max-width:140px;object-fit:contain;border-radius:4px;background:var(--chip);
+cursor:zoom-in;display:block;margin-bottom:3px}.own .x{font-size:11px;padding:1px 6px;margin-left:4px}
+.dl{display:none;border:1px dashed var(--acc);border-radius:8px;padding:10px;margin-top:10px}
+.dl.open{display:block}.dl p{margin:0 0 8px;font-size:13px}.dl .items{display:flex;gap:10px;flex-wrap:wrap}
+.dl figure{margin:0;width:120px;font-size:11px;color:var(--mute)}
+.dl figure img,.dl figure .ph{width:120px;height:150px;object-fit:contain;background:var(--chip);border-radius:4px;
+display:flex;align-items:center;justify-content:center;cursor:zoom-in}
+.dl figure button{width:100%;margin-top:4px}.dl figure button.k-skip{opacity:.6}
+.dl figcaption{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dl .row{margin-top:10px;display:flex;gap:6px}
+.crop{position:fixed;inset:0;z-index:11;background:rgba(0,0,0,.86);display:none;flex-direction:column;
+align-items:center;justify-content:center;gap:10px;padding:16px}.crop.open{display:flex}
+.crop .stage{position:relative;touch-action:none;cursor:crosshair;line-height:0}
+.crop canvas{max-width:92vw;max-height:76vh;display:block;background:#222}
+.crop .sel{position:absolute;border:2px solid #ffcf6e;box-shadow:0 0 0 9999px rgba(0,0,0,.55);display:none;pointer-events:none}
+.crop .cbar{display:flex;gap:8px;align-items:center;color:#eee;font-size:13px;flex-wrap:wrap;justify-content:center}
+.crop .cbar b{font-weight:600}
 .lb{position:fixed;inset:0;z-index:10;background:rgba(0,0,0,.82);display:none;align-items:center;
 justify-content:center;overflow:auto;cursor:zoom-out}.lb.open{display:flex}
 .lb img{max-width:96vw;max-height:94vh;object-fit:contain;cursor:zoom-in;background:#222}
@@ -318,6 +336,128 @@ function details(ev, f){ev.preventDefault();
   const d={title:f.title.value,author:f.author.value,year:f.year.value,publisher:f.publisher.value,isbn:f.isbn.value};
   decide(f.querySelector('button'),'no-match',d,'not listed (details saved)')}
 
+/* ---- your own images, from ~/Downloads ---- */
+function markLink(a){a.closest('.card').dataset.linkAt=String(Date.now()/1000 - 5)}
+const KIND_NEXT={cover:'spine',spine:'skip',skip:'cover'};
+const KIND_LABEL={cover:'Cover',spine:'Spine',skip:'Skip'};
+function setKind(btn, k){btn.dataset.kind=k; btn.textContent=KIND_LABEL[k]; btn.className='k-'+k}
+function guessKind(btn, w, h){ if(btn.dataset.kind!=='skip') setKind(btn, h > 2.6*w ? 'spine' : 'cover') }
+
+async function showDownloads(card, since, quiet){
+  const box=card.querySelector('.dl');
+  const r=await api('/downloads',{since:since||0});
+  if(!r.ok){ if(!quiet) alert(await r.text()); return }
+  const files=await r.json();
+  if(!files.length){
+    if(quiet) return;
+    box.replaceChildren(el('p',null,'No images in Downloads from the last few hours. Save one there (from Google Images, say) and press Add downloaded images again.'));
+    box.classList.add('open'); return}
+  const intro=el('p',null,files.length+' image'+(files.length>1?'s':'')+' in Downloads'+
+    (since?' since you opened Google Images':'')+'. Crop each to just this book (one spine, or just the cover), check its label — Cover, Spine or Skip — then Save these.');
+  const items=el('div',{class:'items'});
+  for(const f of files){
+    const fig=el('figure'); fig.dataset.name=f.name;
+    const kind=el('button',{type:'button',title:'Click to change: Cover → Spine → Skip'}); setKind(kind,'cover');
+    kind.onclick=()=>setKind(kind, KIND_NEXT[kind.dataset.kind]);
+    if(f.showable){
+      const src='/downloads/'+encodeURIComponent(f.name);
+      const im=el('img',{src,alt:''});
+      im.onload=()=>{ if(!fig.dataset.crop) guessKind(kind, im.naturalWidth, im.naturalHeight) };
+      const crop=el('button',{type:'button'},'Crop…');
+      const doCrop=()=>openCropper(src, f.name, (url,w,h)=>{
+        fig.dataset.crop=url; im.src=url; guessKind(kind,w,h); crop.textContent='Re-crop…'});
+      crop.onclick=doCrop; im.onclick=doCrop;
+      fig.append(im, el('figcaption',{title:f.name},f.name), crop, kind);
+    } else {
+      fig.append(el('div',{class:'ph'},'HEIC — crop after saving'), el('figcaption',{title:f.name},f.name), kind);
+    }
+    items.append(fig);
+  }
+  const save=el('button',{class:'primary',type:'button'},'Save these');
+  save.onclick=async()=>{
+    save.disabled=true;
+    for(const fig of items.querySelectorAll('figure')){
+      const k=fig.querySelector('button[class^="k-"]').dataset.kind; if(k==='skip') continue;
+      const r=await api('/attach',{row_id:card.dataset.id,name:fig.dataset.name,kind:k,data:fig.dataset.crop||''});
+      if(!r.ok){alert(await r.text()); save.disabled=false; return}
+      showOwn(card, await r.json());
+    }
+    box.classList.remove('open'); delete card.dataset.linkAt;
+  };
+  const hide=el('button',{type:'button'},'Not now'); hide.onclick=()=>box.classList.remove('open');
+  const row=el('div',{class:'row'}); row.append(save, hide);
+  box.replaceChildren(intro, items, row); box.classList.add('open');
+}
+function addDownloads(btn){showDownloads(btn.closest('.card'), 0, false)}
+
+function showOwn(card, img){   /* img: {kind, url, orig} */
+  const own=card.querySelector('.own');
+  own.querySelector('[data-kind="'+img.kind+'"]')?.remove();
+  const fig=el('figure',{'data-kind':img.kind});
+  const im=el('img',{src:img.url+'?t='+Date.now(),alt:''}); im.onclick=()=>lightbox(im.src,'Your '+img.kind);
+  const cap=el('figcaption',null,'Your '+img.kind);
+  const rc=el('button',{class:'x',type:'button',title:'Crop again from the original download'},'re-crop');
+  rc.onclick=()=>openCropper(img.orig||img.url, 'Your '+img.kind, async url=>{
+    const r=await api('/recrop',{row_id:card.dataset.id,kind:img.kind,data:url});
+    if(r.ok) showOwn(card, Object.assign({}, img, await r.json())); else alert(await r.text())});
+  const x=el('button',{class:'x',type:'button',title:'Remove this image'},'remove');
+  x.onclick=async()=>{const r=await api('/detach',{row_id:card.dataset.id,kind:img.kind}); if(r.ok) fig.remove()};
+  cap.append(rc, x); fig.append(im, cap); own.append(fig);
+}
+document.querySelectorAll('.own[data-own]').forEach(o=>{
+  const card=o.closest('.card'); JSON.parse(o.dataset.own).forEach(img=>showOwn(card,img))});
+window.addEventListener('focus',()=>{
+  document.querySelectorAll('section.card[data-link-at]').forEach(c=>{
+    if(!c.querySelector('.dl').classList.contains('open')) showDownloads(c, Number(c.dataset.linkAt), true)});
+});
+
+/* ---- cropper: drag a box, rotate in quarter turns, keep just that part ---- */
+const CR={};
+function openCropper(src, title, done){
+  const box=document.getElementById('crop');
+  CR.done=done; CR.rot=0; CR.rect=null;
+  box.querySelector('.ctitle').textContent=title;
+  CR.base=new Image();
+  CR.base.onload=()=>{drawRotated(); box.classList.add('open')};
+  CR.base.onerror=()=>alert('Could not load that image to crop.');
+  CR.base.src=src;
+}
+function drawRotated(){
+  const cv=document.querySelector('#crop canvas'), b=CR.base, q=CR.rot%2===1;
+  cv.width=q?b.naturalHeight:b.naturalWidth; cv.height=q?b.naturalWidth:b.naturalHeight;
+  const g=cv.getContext('2d'); g.save(); g.translate(cv.width/2, cv.height/2); g.rotate(CR.rot*Math.PI/2);
+  g.drawImage(b, -b.naturalWidth/2, -b.naturalHeight/2); g.restore();
+  CR.rect=null; showSel();
+}
+function rotateCrop(){CR.rot=(CR.rot+1)%4; drawRotated()}
+function showSel(){
+  const s=document.querySelector('#crop .sel');
+  if(!CR.rect){s.style.display='none'; document.getElementById('cropsize').textContent='drag a box around just this book'; return}
+  const r=CR.rect; Object.assign(s.style,{display:'block',left:r.x+'px',top:r.y+'px',width:r.w+'px',height:r.h+'px'});
+  const cv=document.querySelector('#crop canvas'), k=cv.width/cv.getBoundingClientRect().width;
+  document.getElementById('cropsize').textContent=Math.round(r.w*k)+' × '+Math.round(r.h*k)+' px';
+}
+(function(){
+  const stage=document.querySelector('#crop .stage'); let start=null;
+  const pt=e=>{const b=stage.querySelector('canvas').getBoundingClientRect();
+    return {x:Math.max(0,Math.min(b.width,e.clientX-b.left)), y:Math.max(0,Math.min(b.height,e.clientY-b.top))}};
+  stage.addEventListener('pointerdown',e=>{start=pt(e); stage.setPointerCapture(e.pointerId); CR.rect=null; showSel()});
+  stage.addEventListener('pointermove',e=>{ if(!start) return; const p=pt(e);
+    CR.rect={x:Math.min(start.x,p.x), y:Math.min(start.y,p.y), w:Math.abs(p.x-start.x), h:Math.abs(p.y-start.y)}; showSel()});
+  stage.addEventListener('pointerup',()=>{start=null; if(CR.rect && (CR.rect.w<6||CR.rect.h<6)){CR.rect=null; showSel()}});
+})();
+function finishCrop(whole){
+  const cv=document.querySelector('#crop canvas'), k=cv.width/cv.getBoundingClientRect().width;
+  const r=(!whole && CR.rect) ? CR.rect : {x:0,y:0,w:cv.width/k,h:cv.height/k};
+  let sw=Math.round(r.w*k), sh=Math.round(r.h*k);
+  const scale=Math.min(1, 2400/Math.max(sw,sh));
+  const out=document.createElement('canvas'); out.width=Math.round(sw*scale); out.height=Math.round(sh*scale);
+  out.getContext('2d').drawImage(cv, Math.round(r.x*k), Math.round(r.y*k), sw, sh, 0, 0, out.width, out.height);
+  const url=out.toDataURL('image/jpeg', 0.92);
+  closeCrop(); CR.done(url, out.width, out.height);
+}
+function closeCrop(){document.getElementById('crop').classList.remove('open')}
+
 /* ---- lightbox ---- */
 function lightbox(src, cap){
   const lb=document.getElementById('lb'); lb.classList.remove('zoom');
@@ -404,6 +544,14 @@ def photo_link(photo, drive):
     return ""
 
 
+def own_images(row_id: str) -> str:
+    """Your own cover/spine images for this copy (from images/, never published);
+    drawn by the page script so they can be re-cropped or removed."""
+    imgs = [{"kind": k, "url": "/" + rel, "orig": "/" + local_images.original(row_id, k)}
+            for k, rel in local_images.images_for(row_id).items()]
+    return f'<div class="own" data-own="{esc(json.dumps(imgs))}"></div>'
+
+
 def card(b, r, ov, drive, check=False):
     rid_ = rid(b)
     status = (r or {}).get("status") or "unresolved"
@@ -420,15 +568,18 @@ def card(b, r, ov, drive, check=False):
       {f'<span class="chip check">check: matched without the subtitle</span>' if check else ''}</div>
     {f'<div class="note">matched to <b>{esc(r.get("match_title"))}</b> · {esc(r.get("match_author"))} {esc(r.get("year"))}</div>' if check else ''}
     <div class="note">{esc(b['photo'])} · {esc(b['stack'])} #{esc(b['position'])} · {photo_link(b['photo'], drive)}
-      · <a href="{esc(image_search_url(b))}" target="_blank" rel="noopener"
-           title="Look at photos of this book (ISBN, publisher, edition) — opens Google Images">Google Images ↗</a></div>
+      · <a href="{esc(image_search_url(b))}" target="_blank" rel="noopener" onclick="markLink(this)"
+           title="Look at photos of this book; images you save to Downloads then appear here">Google Images ↗</a></div>
     {f'<div class="note">{esc(b["notes"])}</div>' if b["notes"] else ''}
     {shelf_photo(b, drive)}
+    {own_images(rid_)}
+    <div class="dl"></div>
     <div class="acts">
       {(f'<button {"class=primary " if check else ""}onclick="decide(this,&#39;accept&#39;)" '
         f'title="The current best match is the right book">{"Looks right" if check else "Best guess is right"}</button>')
        if cands else ''}
       <button onclick="searchMore(this,false)" title="Wider searches with more results">Search harder</button>
+      <button onclick="addDownloads(this)" title="Attach a cover or spine image you saved to Downloads (kept on this Mac only)">Add downloaded images</button>
       <button onclick="toggle(this,'more')">Search by text or ISBN…</button>
       <button onclick="decide(this,'no-match')" title="Real book, just not in Open Library">Not listed — keep as read</button>
       <button onclick="toggle(this,'details')">Not listed — add details…</button>
@@ -501,6 +652,12 @@ def page():
 {tools_bar()}</header>
 {hint}<main>{body}</main>
 <div id="lb" class="lb" onclick="lbClick(event)"><img alt=""><div class="lbcap"></div></div>
+<div id="crop" class="crop"><div class="cbar"><b class="ctitle"></b> · <span id="cropsize"></span></div>
+<div class="stage"><canvas></canvas><div class="sel"></div></div>
+<div class="cbar"><button type="button" onclick="rotateCrop()">Rotate ↻</button>
+<button type="button" class="primary" onclick="finishCrop(false)">Use crop</button>
+<button type="button" onclick="finishCrop(true)">Use whole image</button>
+<button type="button" onclick="closeCrop()">Cancel</button></div></div>
 <div id="log"><div class="lh"><b>Actions</b><span id="jobstate"></span>
 <button onclick="closeLog()">Hide</button></div><pre id="logtext"></pre></div>
 <script>{JS}</script></body></html>"""
@@ -531,6 +688,16 @@ def start_job(name: str) -> str:
             JOB.update(running=False, ok=ok)
     threading.Thread(target=work, daemon=True).start()
     return ""
+
+
+def jpeg_from_data_url(url: str):
+    """The bytes of a 'data:image/jpeg;base64,…' URL from the cropper, or None."""
+    if not url:
+        return None
+    head, _, body = url.partition(",")
+    if head != "data:image/jpeg;base64":
+        raise ValueError("expected a JPEG from the cropper")
+    return base64.b64decode(body)
 
 
 def allowed_host(host: str, port: int) -> bool:
@@ -565,6 +732,21 @@ class H(BaseHTTPRequestHandler):
             q = parse_qs(u.query)
             if "all" in q: SHOW_ALL = q["all"][0] == "1"
             return self.send(200, page())
+        if u.path.startswith("/downloads/"):
+            try:
+                f = local_images.safe_download(unquote(u.path[len("/downloads/"):]))
+                ctype = local_images.TYPES.get(f.suffix.lower())
+                if ctype:
+                    return self.send(200, f.read_bytes(), ctype)
+            except ValueError:
+                pass
+            return self.send(404, "not found", "text/plain")
+        if u.path.startswith("/images/"):
+            try:
+                f = local_images.serve_path(unquote(u.path[len("/images/"):]))
+                return self.send(200, f.read_bytes(), local_images.TYPES[f.suffix.lower()])
+            except (ValueError, KeyError):
+                return self.send(404, "not found", "text/plain")
         if u.path.startswith("/photo/"):
             name = Path(u.path).name
             f = PHOTOS / f"{name}_small.jpg"
@@ -581,6 +763,21 @@ class H(BaseHTTPRequestHandler):
             if self.path == "/run":
                 why = start_job(str(data.get("action", "")))
                 return self.send(409 if why else 200, why or "started", "text/plain")
+            if self.path == "/downloads":
+                files = local_images.recent_downloads(float(data.get("since") or 0))
+                return self.send(200, json.dumps(files), "application/json")
+            if self.path == "/attach":
+                rel = local_images.attach(data["row_id"], data["name"], data["kind"],
+                                          jpeg_from_data_url(data.get("data", "")))
+                return self.send(200, json.dumps(
+                    {"kind": data["kind"], "url": "/" + rel,
+                     "orig": "/" + local_images.original(data["row_id"], data["kind"])}), "application/json")
+            if self.path == "/recrop":
+                rel = local_images.recrop(data["row_id"], data["kind"], jpeg_from_data_url(data["data"]))
+                return self.send(200, json.dumps({"url": "/" + rel}), "application/json")
+            if self.path == "/detach":
+                local_images.detach(data["row_id"], data["kind"])
+                return self.send(200, "ok", "text/plain")
             if self.path == "/search":
                 books = {rid(b): b for b in csv.DictReader(open(BOOKS, encoding="utf-8"))}
                 row = books[data["row_id"]]

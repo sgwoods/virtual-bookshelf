@@ -28,5 +28,8 @@ data/cache/
 # Built site (scripts/build_site.py → _site/, deployed by .github/workflows/pages.yml)
 _site/
 
+# Your own cover/spine images (review page → Add downloaded images); local display only
+images/
+
 # Reading status / ratings / notes stay local until the owner approves publishing them
 data/reading.csv

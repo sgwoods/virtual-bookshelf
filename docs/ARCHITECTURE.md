@@ -123,6 +123,21 @@ and merge what they find into the card, best first, with publisher, year and
 ISBN. Approving is then one click on **Use this**; if nothing fits, **Not
 listed — keep as read**. Nothing needs typing.
 
+**Your own images** (`scripts/local_images.py`). Images you save to
+~/Downloads — say from the Google Images link — can be attached to a book as
+its cover or spine. After you click a card's Google Images link and come back,
+that card shows the images downloaded since; **Add downloaded images** shows
+any from the last few hours. Each is guessed as Cover or Spine by its shape
+(click to change, or Skip) and opens in a **cropper**: drag a box around just
+this book — one spine out of a photo of several, or just the cover — and
+rotate in quarter turns. Saving moves the file out of Downloads into
+`images/<row id>/`: `cover.jpg` / `spine.jpg` (the crop) beside
+`cover.orig.*` / `spine.orig.*` (the download, kept for **re-crop**). Cropping
+runs in the browser, so nothing needs installing. `images/` is git-ignored:
+for now these are used by the review cards and the local preview
+(`build_site.py --local-images`, which Rebuild and Finish use) and are not
+published; publishing them is ROADMAP step 4c.
+
 When no candidate is right: **Search harder** runs wider Open Library and
 Google Books searches with more results; **Search by text or ISBN** searches
 for exactly what is typed, or looks an ISBN up directly (the surest route for a
@@ -206,6 +221,9 @@ Standard library `unittest`, no network:
 - `tests/test_pipeline.py` — against a throwaway repository with a local
   origin: publishing goes to a review branch, commits only the data files and
   never moves `main`; updating refuses over unpublished data.
+- `tests/test_local_images.py` — picking up downloads, cropping, keeping the
+  original, replacing and removing, refusing anything outside Downloads or
+  `images/`, and that only the local preview uses your images.
 - `tests/test_docs.py` — this document against the tree.
 
 ## 7. Phase 1a tools

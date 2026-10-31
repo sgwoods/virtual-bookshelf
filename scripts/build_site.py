@@ -4,6 +4,7 @@
 Usage:
     python3 scripts/build_site.py              # → _site/index.html
     python3 scripts/build_site.py --out DIR    # → DIR/index.html
+    python3 scripts/build_site.py --local-images   # also use your own images/ (local preview only)
     open _site/index.html                      # preview locally
 
 Reads data/books.csv (every physical item) and data/resolved.csv (covers),
@@ -15,6 +16,10 @@ Publishing is done by .github/workflows/pages.yml, which runs this script on
 every push to main, adds build.json (the deployed commit, for the portfolio
 hub at sgwoods.github.io/public) and deploys _site/ to GitHub Pages.
 _site/ is git-ignored: never commit it.
+
+With --local-images (what the review page's Rebuild and Finish use), your own
+cover and spine images from images/ are used for the local preview. CI never
+passes it, and images/ is git-ignored, so they are never published.
 
 Every book in books.csv appears. A cover is shown only when the lookup is
 matched or confirmed; everything else gets a title placeholder marked
@@ -48,8 +53,12 @@ def cover(rec: dict) -> str:
     return url
 
 
-def build(out_dir: Path = OUT_DIR) -> dict:
+def build(out_dir: Path = OUT_DIR, local_images: bool = False) -> dict:
     """Write out_dir/index.html; return counts (used by the tests)."""
+    own = {}
+    if local_images:
+        import local_images as li
+        own = li.all_images()
     books = [r for r in csv.DictReader(open(BOOKS, encoding="utf-8")) if r["position"] != "0"]
     res = {r["row_id"]: r for r in csv.DictReader(open(RESOLVED, encoding="utf-8"))} if RESOLVED.exists() else {}
     reading = {}
@@ -67,13 +76,19 @@ def build(out_dir: Path = OUT_DIR) -> dict:
         if author in ("", "—"):
             author = "Unknown author"
         key = (norm(title), surname(b["author"]))
+        mine = {k: "../" + v for k, v in own.get(row_id(b), {}).items()}   # relative to _site/
         c = cards.get(key)
         if c:
+            if mine.get("cover"):
+                c["c"] = mine["cover"]
+            if mine.get("spine"):
+                c["sp"] = mine["spine"]
             c["n"] += 1
             c["c"] = c["c"] or cover(rec)
             continue
         s, p = reading.get(norm(title), ("unread", 0))
-        cards[key] = {"t": title, "a": author, "c": cover(rec), "n": 1, "s": s, "p": p,
+        cards[key] = {"t": title, "a": author, "c": mine.get("cover") or cover(rec), "n": 1, "s": s, "p": p,
+                      **({"sp": mine["spine"]} if mine.get("spine") else {}),
                       "_sort": (surname(b["author"]) or "~", norm(title))}
 
     out = sorted(cards.values(), key=lambda c: c.pop("_sort"))
@@ -89,8 +104,10 @@ def build(out_dir: Path = OUT_DIR) -> dict:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path, default=OUT_DIR, help="output directory (default: _site/)")
+    ap.add_argument("--local-images", action="store_true",
+                    help="use your own images/ for covers (local preview only; never in CI)")
     a = ap.parse_args()
-    n = build(a.out)
+    n = build(a.out, a.local_images)
     print(f"{n['copies']} books · {n['titles']} titles · {n['covers_missing']} covers missing "
           f"→ {a.out / 'index.html'}")
 
