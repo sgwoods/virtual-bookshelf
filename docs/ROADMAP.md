@@ -137,10 +137,12 @@ Record where every spine is in its photo, then cut it out:
 Until then the review page shows the whole shelf photo for each book (from
 Drive, or a local copy), labelled with the spine's stack and position.
 
-### 4c. Your own images on the public site  *(Oct 31 requirement)*
-Today your downloaded, cropped covers and spines live in `images/` on the Mac
-and appear only in review and the local preview. The public site should show
-them too, in place of missing or poor covers. Plan:
+### 4c. Your own images on the public site  ✅ built Oct 31
+Your downloaded, cropped covers and spines are published (web-sized, with
+their source) and used in place of missing or poor covers. As built — see
+ARCHITECTURE §4; the original plan follows:
+- **One-click capture:** the "📚 Add to bookshelf" bookmark sends the picture
+  you clicked on any page straight to the card you came from, source included.
 - **Record where each image came from.** On attach, read macOS's "Where from"
   for the download (the page and image address) and store it with the image,
   with its kind (web download or your own photo).

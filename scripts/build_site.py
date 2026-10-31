@@ -17,9 +17,11 @@ every push to main, adds build.json (the deployed commit, for the portfolio
 hub at sgwoods.github.io/public) and deploys _site/ to GitHub Pages.
 _site/ is git-ignored: never commit it.
 
-With --local-images (what the review page's Rebuild and Finish use), your own
-cover and spine images from images/ are used for the local preview. CI never
-passes it, and images/ is git-ignored, so they are never published.
+Your own images: the public build uses the published ones listed in
+data/images.csv (web-sized copies in site_images/, copied into the site),
+with a small credit naming each image's source. With --local-images (what the
+review page's Rebuild and Finish use), all of your images in images/ are used
+instead, published or not — that is a local preview only; CI never passes it.
 
 Every book in books.csv appears. A cover is shown only when the lookup is
 matched or confirmed; everything else gets a title placeholder marked
@@ -28,7 +30,7 @@ Standard library only.
 """
 from __future__ import annotations
 
-import argparse, csv, json, sys, time
+import argparse, csv, json, shutil, sys, time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -55,10 +57,20 @@ def cover(rec: dict) -> str:
 
 def build(out_dir: Path = OUT_DIR, local_images: bool = False) -> dict:
     """Write out_dir/index.html; return counts (used by the tests)."""
-    own = {}
+    import local_images as li
+    own, credit = {}, {}           # row id → {kind: path relative to the site}, row id → source
     if local_images:
-        import local_images as li
-        own = li.all_images()
+        for rid, kinds in li.all_images().items():
+            own[rid] = {k: "../" + v for k, v in kinds.items()}
+            d = li.describe(rid, "cover") if "cover" in kinds else {}
+            if d.get("source"):
+                credit[rid] = {"is": d["source"], "iu": d["source_url"]}
+    else:
+        for rid, kinds in li.published(ROOT).items():
+            own[rid] = {k: v["file"] for k, v in kinds.items()}
+            cv = kinds.get("cover")
+            if cv and cv.get("source"):
+                credit[rid] = {"is": cv["source"], "iu": cv.get("page_url") or cv.get("image_url", "")}
     books = [r for r in csv.DictReader(open(BOOKS, encoding="utf-8")) if r["position"] != "0"]
     res = {r["row_id"]: r for r in csv.DictReader(open(RESOLVED, encoding="utf-8"))} if RESOLVED.exists() else {}
     reading = {}
@@ -76,11 +88,13 @@ def build(out_dir: Path = OUT_DIR, local_images: bool = False) -> dict:
         if author in ("", "—"):
             author = "Unknown author"
         key = (norm(title), surname(b["author"]))
-        mine = {k: "../" + v for k, v in own.get(row_id(b), {}).items()}   # relative to _site/
+        mine = own.get(row_id(b), {})
         c = cards.get(key)
         if c:
             if mine.get("cover"):
                 c["c"] = mine["cover"]
+                c.pop("is", None); c.pop("iu", None)
+                c.update(credit.get(row_id(b), {}))
             if mine.get("spine"):
                 c["sp"] = mine["spine"]
             c["n"] += 1
@@ -89,6 +103,7 @@ def build(out_dir: Path = OUT_DIR, local_images: bool = False) -> dict:
         s, p = reading.get(norm(title), ("unread", 0))
         cards[key] = {"t": title, "a": author, "c": mine.get("cover") or cover(rec), "n": 1, "s": s, "p": p,
                       **({"sp": mine["spine"]} if mine.get("spine") else {}),
+                      **(credit.get(row_id(b), {}) if mine.get("cover") else {}),
                       "_sort": (surname(b["author"]) or "~", norm(title))}
 
     out = sorted(cards.values(), key=lambda c: c.pop("_sort"))
@@ -97,6 +112,9 @@ def build(out_dir: Path = OUT_DIR, local_images: bool = False) -> dict:
     html = html.replace("/*BUILT*/", time.strftime("%Y-%m-%d"))
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "index.html").write_text(html, encoding="utf-8")
+    site_images = ROOT / li.SITE_DIR
+    if not local_images and site_images.is_dir():
+        shutil.copytree(site_images, out_dir / li.SITE_DIR, dirs_exist_ok=True)
     return {"rows": len(books), "copies": sum(c["n"] for c in out), "titles": len(out),
             "covers_missing": sum(1 for c in out if not c["c"]), "cards": out}
 

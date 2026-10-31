@@ -121,6 +121,17 @@ class Guard(unittest.TestCase):
                 code, _ = self.request("POST", path, {"row_id": "x", "name": "a.jpg", "kind": "cover"})
                 self.assertEqual(code, 403)
 
+    def test_publish_switch_needs_the_token(self):
+        code, _ = self.request("POST", "/publish", {"row_id": "x", "kind": "cover", "on": False})
+        self.assertEqual(code, 403)
+
+    def test_bookmark_needs_its_key(self):
+        import os
+        os.environ.setdefault("VB_CONFIG", tempfile.mkdtemp())
+        code, body = self.request("GET", "/grab?k=wrong&img=https%3A%2F%2Fexample.com%2Fa.jpg")
+        self.assertEqual(code, 403)
+        self.assertIn("out of date", body)
+
     def test_downloads_serve_only_images_there(self):
         code, _ = self.request("GET", "/downloads/..%2Fsecret.jpg")
         self.assertEqual(code, 404)

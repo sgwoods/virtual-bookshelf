@@ -69,7 +69,7 @@ class OwnImages(unittest.TestCase):
         self.download("b.jpg")
         local_images.attach(ROW, "b.jpg", "cover")
         d = self.tmp / "images" / "IMG_8879__far-right__1"
-        self.assertEqual(sorted(p.name for p in d.iterdir()), ["cover.jpg", "cover.orig.jpg"])
+        self.assertEqual(sorted(p.name for p in d.iterdir()), ["cover.jpg", "cover.orig.jpg", "meta.json"])
 
     def test_recrop_replaces_only_the_crop(self):
         self.download("trek.jpg")
@@ -134,3 +134,109 @@ class SiteUsesOwnImagesOnlyLocally(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Sources(unittest.TestCase):
+    """Where an image came from is captured without anyone typing it."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        (self.tmp / "Downloads").mkdir()
+        os.environ["VB_DOWNLOADS"] = str(self.tmp / "Downloads")
+        os.environ["VB_CONFIG"] = str(self.tmp / "config")
+        self._root, self._images = local_images.ROOT, local_images.IMAGES
+        local_images.ROOT, local_images.IMAGES = self.tmp, self.tmp / "images"
+
+    def tearDown(self):
+        for k in ("VB_DOWNLOADS", "VB_CONFIG"):
+            os.environ.pop(k, None)
+        local_images.ROOT, local_images.IMAGES = self._root, self._images
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_macos_where_from_record(self):
+        import plistlib
+        raw = plistlib.dumps(["https://i.ebayimg.com/images/trek2.jpg", "https://www.ebay.com/itm/123"],
+                             fmt=plistlib.FMT_BINARY).hex()
+        got = local_images.parse_where_froms(" ".join(raw[i:i + 2] for i in range(0, len(raw), 2)))
+        self.assertEqual(got, {"image_url": "https://i.ebayimg.com/images/trek2.jpg",
+                               "page_url": "https://www.ebay.com/itm/123"})
+        self.assertEqual(local_images.parse_where_froms("not hex"), {})
+
+    def fake_fetch(self, ctype="image/jpeg", data=JPEG):
+        class R:
+            headers = {"Content-Type": ctype}
+            def read(self, n): return data
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+        real = local_images.urllib.request.urlopen
+        local_images.urllib.request.urlopen = lambda req, timeout=0: R()
+        self.addCleanup(setattr, local_images.urllib.request, "urlopen", real)
+
+    def test_bookmark_grab_saves_to_downloads_with_its_source(self):
+        self.fake_fetch()
+        name = local_images.grab("https://i.ebayimg.com/images/trek2.jpg", "https://www.ebay.com/itm/123")
+        self.assertTrue((self.tmp / "Downloads" / name).is_file())
+        [f] = local_images.recent_downloads()
+        self.assertEqual((f["name"], f["source"]), (name, "ebay.com"))
+        local_images.attach(ROW, name, "cover", CROP)
+        self.assertEqual(local_images.describe(ROW, "cover"),
+                         {"source": "ebay.com", "source_url": "https://www.ebay.com/itm/123", "published": True})
+
+    def test_grab_refuses_non_images_and_non_web_addresses(self):
+        self.fake_fetch(ctype="text/html", data=b"<html>")
+        with self.assertRaises(ValueError):
+            local_images.grab("https://example.com/page")
+        with self.assertRaises(ValueError):
+            local_images.grab("file:///etc/passwd")
+
+    def test_grab_key_is_stable(self):
+        self.assertEqual(local_images.grab_key(), local_images.grab_key())
+        self.assertGreaterEqual(len(local_images.grab_key()), 20)
+
+
+class Publishing(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self._root, self._images = local_images.ROOT, local_images.IMAGES
+        local_images.ROOT, local_images.IMAGES = self.tmp, self.tmp / "images"
+        d = local_images.folder(ROW)
+        d.mkdir(parents=True)
+        (d / "cover.jpg").write_bytes(CROP)
+        (d / "cover.orig.jpg").write_bytes(JPEG)
+        (d / "spine.jpg").write_bytes(CROP)
+        local_images.write_meta(ROW, {"cover": {"image_url": "https://i.ebayimg.com/a.jpg",
+                                                "page_url": "https://www.ebay.com/itm/1", "published": True},
+                                      "spine": {"published": False}})
+
+    def tearDown(self):
+        local_images.ROOT, local_images.IMAGES = self._root, self._images
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_only_published_images_are_exported_with_their_source(self):
+        n = local_images.export_published(self.tmp, log=lambda *_: None)
+        self.assertEqual(n, 1)
+        pub = local_images.published(self.tmp)
+        self.assertEqual(list(pub), [ROW])
+        self.assertEqual(set(pub[ROW]), {"cover"})
+        self.assertEqual(pub[ROW]["cover"]["source"], "ebay.com")
+        self.assertTrue((self.tmp / pub[ROW]["cover"]["file"]).is_file())
+        self.assertFalse(any("orig" in p.name for p in (self.tmp / "site_images").rglob("*")))
+
+    def test_unpublishing_removes_the_copy(self):
+        local_images.export_published(self.tmp, log=lambda *_: None)
+        local_images.set_published(ROW, "cover", False)
+        local_images.export_published(self.tmp, log=lambda *_: None)
+        self.assertEqual(local_images.published(self.tmp), {})
+        self.assertFalse(any(p.is_file() for p in (self.tmp / "site_images").rglob("*")))
+
+    def test_public_build_uses_published_images_with_credit(self):
+        local_images.export_published(self.tmp, log=lambda *_: None)
+        real = build_site.ROOT
+        build_site.ROOT = self.tmp
+        self.addCleanup(setattr, build_site, "ROOT", real)
+        out = self.tmp / "out"
+        n = build_site.build(out)
+        trek = [c for c in n["cards"] if c["t"] == "The Best of Trek 2"][0]
+        self.assertTrue(trek["c"].startswith("site_images/"))
+        self.assertEqual((trek["is"], trek["iu"]), ("ebay.com", "https://www.ebay.com/itm/1"))
+        self.assertTrue((out / trek["c"]).is_file(), "images copied into the site")

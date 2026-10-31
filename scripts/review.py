@@ -184,6 +184,11 @@ form.more,form.details,form.edit{display:none;flex-direction:column;gap:6px;marg
 form.more.open,form.details.open,form.edit.open{display:flex}
 form.more input,form.details input,form.edit input{font:inherit;font-size:13px;padding:5px 8px;
 border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink)}
+.own .meta{display:block;font-size:11px;margin-top:2px}.own .pub{font-size:11px;padding:1px 6px}
+.own .pub.on{border-color:var(--ok);color:var(--ok)}.own .pub.off{color:var(--mute)}
+.bm{display:inline-block;font-size:12px;padding:3px 9px;border:1px dashed var(--acc);border-radius:6px;
+text-decoration:none;color:var(--acc);cursor:grab}.bmhelp{font-size:12px;color:var(--mute)}
+.dl figcaption.src{color:var(--acc)}
 .own{display:flex;gap:10px;margin:10px 0 2px;flex-wrap:wrap}.own figure{margin:0;font-size:12px;color:var(--mute)}
 .own img{height:120px;max-width:140px;object-fit:contain;border-radius:4px;background:var(--chip);
 cursor:zoom-in;display:block;margin-bottom:3px}.own .x{font-size:11px;padding:1px 6px;margin-left:4px}
@@ -367,7 +372,9 @@ async function showDownloads(card, since, quiet){
       const doCrop=()=>openCropper(src, f.name, (url,w,h)=>{
         fig.dataset.crop=url; im.src=url; guessKind(kind,w,h); crop.textContent='Re-crop…'});
       crop.onclick=doCrop; im.onclick=doCrop;
-      fig.append(im, el('figcaption',{title:f.name},f.name), crop, kind);
+      fig.append(im, el('figcaption',{title:f.name},f.name));
+      if(f.source) fig.append(el('figcaption',{class:'src',title:'Where this image came from'},'from '+f.source));
+      fig.append(crop, kind);
     } else {
       fig.append(el('div',{class:'ph'},'HEIC — crop after saving'), el('figcaption',{title:f.name},f.name), kind);
     }
@@ -390,7 +397,7 @@ async function showDownloads(card, since, quiet){
 }
 function addDownloads(btn){showDownloads(btn.closest('.card'), 0, false)}
 
-function showOwn(card, img){   /* img: {kind, url, orig} */
+function showOwn(card, img){   /* img: {kind, url, orig, source, source_url, published} */
   const own=card.querySelector('.own');
   own.querySelector('[data-kind="'+img.kind+'"]')?.remove();
   const fig=el('figure',{'data-kind':img.kind});
@@ -402,7 +409,16 @@ function showOwn(card, img){   /* img: {kind, url, orig} */
     if(r.ok) showOwn(card, Object.assign({}, img, await r.json())); else alert(await r.text())});
   const x=el('button',{class:'x',type:'button',title:'Remove this image'},'remove');
   x.onclick=async()=>{const r=await api('/detach',{row_id:card.dataset.id,kind:img.kind}); if(r.ok) fig.remove()};
-  cap.append(rc, x); fig.append(im, cap); own.append(fig);
+  cap.append(rc, x); fig.append(im, cap);
+  if(img.source){
+    const a=el('a',{class:'meta',href:img.source_url,target:'_blank',rel:'noopener',title:img.source_url},'from '+img.source);
+    fig.append(a)}
+  const pub=el('button',{type:'button',title:'Show this image on the public site (applied on Save & push / Finish)'});
+  const paint=on=>{pub.className='pub '+(on?'on':'off'); pub.textContent=on?'✓ on public site':'not on public site'; pub.dataset.on=on?'1':''};
+  paint(img.published!==false);
+  pub.onclick=async()=>{const on=!pub.dataset.on;
+    const r=await api('/publish',{row_id:card.dataset.id,kind:img.kind,on}); if(r.ok) paint(on); else alert(await r.text())};
+  fig.append(pub); own.append(fig);
 }
 document.querySelectorAll('.own[data-own]').forEach(o=>{
   const card=o.closest('.card'); JSON.parse(o.dataset.own).forEach(img=>showOwn(card,img))});
@@ -547,7 +563,8 @@ def photo_link(photo, drive):
 def own_images(row_id: str) -> str:
     """Your own cover/spine images for this copy (from images/, never published);
     drawn by the page script so they can be re-cropped or removed."""
-    imgs = [{"kind": k, "url": "/" + rel, "orig": "/" + local_images.original(row_id, k)}
+    imgs = [{"kind": k, "url": "/" + rel, "orig": "/" + local_images.original(row_id, k),
+             **local_images.describe(row_id, k)}
             for k, rel in local_images.images_for(row_id).items()]
     return f'<div class="own" data-own="{esc(json.dumps(imgs))}"></div>'
 
@@ -620,7 +637,12 @@ def tools_bar():
         f'title="{esc(pipeline.STEPS[step].__doc__ or "")}">{esc(label)}</button>'
         for k, (label, step, _) in ACTIONS.items())
     return (f'<div class="tools"><span class="stat">{counts}<br>{state}</span>{btns}'
-            f'<button onclick="window.open(\'/site/\',\'_blank\')">Preview site</button></div>')
+            f'<button onclick="window.open(\'/site/\',\'_blank\')">Preview site</button></div>'
+            f'<div class="tools"><span class="bmhelp">Once: drag this to your bookmarks bar →</span>'
+            f'<a class="bm" href="{esc(bookmarklet())}" onclick="event.preventDefault();alert(\'Drag this button to your '
+            f'bookmarks bar. Then, on Google Images, click the picture you want and click the bookmark: the image '
+            f'arrives on the card you came from, with its source.\')">📚 Add to bookshelf</a>'
+            f'<span class="bmhelp">On Google Images: click the picture, then the bookmark.</span></div>')
 
 
 def page():
@@ -690,6 +712,35 @@ def start_job(name: str) -> str:
     return ""
 
 
+def bookmarklet() -> str:
+    """The "Add to bookshelf" bookmark: on any page, sends the largest web image
+    (and the page it is linked from, when that is not Google) to this review
+    page, which saves it to Downloads with its source. Opens a small window, so
+    it is a plain navigation, not a cross-site request."""
+    js = ("(()=>{let b=null,a=0;for(const i of document.images){const s=i.currentSrc||i.src;"
+          "if(!/^https?:/.test(s))continue;const r=i.getBoundingClientRect();const v=r.width*r.height;"
+          "if(v>a&&r.width>60&&r.height>60){a=v;b=i}}"
+          "if(!b){alert('No picture found on this page. Click the picture first, then the bookmark.');return}"
+          "let p=location.href;const l=b.closest('a[href^=\"http\"]');"
+          "if(l&&!/(^|\\.)google\\./.test(l.hostname))p=l.href;"
+          f"window.open('http://127.0.0.1:{PORT}/grab?k={local_images.grab_key()}"
+          "&img='+encodeURIComponent(b.currentSrc||b.src)+'&page='+encodeURIComponent(p),"
+          "'vbgrab','width=480,height=420')})()")
+    return "javascript:" + js
+
+
+GRAB_PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>Add to bookshelf</title>
+<style>body{{font:15px -apple-system,sans-serif;margin:24px;background:#f6f4ef;color:#1d1b18}}
+img{{max-width:100%;max-height:240px;display:block;margin:10px 0;border-radius:4px}}b{{color:{color}}}</style></head>
+<body><b>{headline}</b><p>{detail}</p>{img}<script>{script}</script></body></html>"""
+
+
+def grab_page(ok: bool, headline: str, detail: str, name: str = "") -> str:
+    return GRAB_PAGE.format(color="#2f6b3a" if ok else "#9b2c2c", headline=esc(headline), detail=esc(detail),
+                            img=f'<img src="/downloads/{esc(name)}" alt="">' if name else "",
+                            script="setTimeout(()=>window.close(),2200)" if ok else "")
+
+
 def jpeg_from_data_url(url: str):
     """The bytes of a 'data:image/jpeg;base64,…' URL from the cropper, or None."""
     if not url:
@@ -732,6 +783,20 @@ class H(BaseHTTPRequestHandler):
             q = parse_qs(u.query)
             if "all" in q: SHOW_ALL = q["all"][0] == "1"
             return self.send(200, page())
+        if u.path == "/grab":
+            q = parse_qs(u.query)
+            key = (q.get("k") or [""])[0]
+            if not secrets.compare_digest(key, local_images.grab_key()):
+                return self.send(403, grab_page(False, "Not sent", "This bookmark is out of date: drag "
+                                                "“Add to bookshelf” from the review page to your bookmarks bar again."))
+            try:
+                name = local_images.grab((q.get("img") or [""])[0], (q.get("page") or [""])[0])
+            except Exception as e:
+                return self.send(400, grab_page(False, "Not sent", f"Could not fetch that image ({e}). "
+                                                "Try opening the picture full size first, or save it to Downloads."))
+            return self.send(200, grab_page(True, "Sent to your bookshelf ✓",
+                                            "Switch back to the review page: it is waiting on the card you came from, "
+                                            "ready to crop and save.", name))
         if u.path.startswith("/downloads/"):
             try:
                 f = local_images.safe_download(unquote(u.path[len("/downloads/"):]))
@@ -771,7 +836,13 @@ class H(BaseHTTPRequestHandler):
                                           jpeg_from_data_url(data.get("data", "")))
                 return self.send(200, json.dumps(
                     {"kind": data["kind"], "url": "/" + rel,
-                     "orig": "/" + local_images.original(data["row_id"], data["kind"])}), "application/json")
+                     "orig": "/" + local_images.original(data["row_id"], data["kind"]),
+                     **local_images.describe(data["row_id"], data["kind"])}), "application/json")
+            if self.path == "/publish":
+                if data.get("kind") not in local_images.KINDS:
+                    raise ValueError("kind must be cover or spine")
+                local_images.set_published(data["row_id"], data["kind"], bool(data.get("on")))
+                return self.send(200, "ok", "text/plain")
             if self.path == "/recrop":
                 rel = local_images.recrop(data["row_id"], data["kind"], jpeg_from_data_url(data["data"]))
                 return self.send(200, json.dumps({"url": "/" + rel}), "application/json")
