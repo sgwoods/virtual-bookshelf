@@ -5,6 +5,14 @@ This is the dated log of work and results. What exists and how it works is in
 
 ## Latest (Oct 31)
 
+- **Your images on the public site.** Each image records where it came from
+  automatically (macOS's "Where from" for downloads, or the new **📚 Add to
+  bookshelf** bookmark, which sends the clicked picture on Google Images
+  straight to the card). An **On public site** switch per image (on by
+  default); Save & push / Finish publish web-sized copies to `site_images/`
+  with sources in `data/images.csv`, and the public page shows them with a
+  small "image · source" credit. 59 tests.
+
 - **Your own images.** Images saved to Downloads (e.g. from the Google Images
   link) appear on the card you were working on; crop to just this book
   (one spine out of several, or just the cover), rotate, label Cover or Spine,

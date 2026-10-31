@@ -66,6 +66,18 @@ class Publish(unittest.TestCase):
         self.assertIn(pipeline.compare_url(br), self.log)
         self.assertIn("notes.txt", sh(self.work, "git", "status", "--porcelain"))
 
+    def test_publish_includes_published_images_not_originals(self):
+        import local_images
+        d = self.work / "images" / "IMG_1__shelf__1"
+        d.mkdir(parents=True)
+        (d / "cover.jpg").write_bytes(b"\xff\xd8crop")
+        (d / "cover.orig.jpg").write_bytes(b"\xff\xd8original")
+        (d / "meta.json").write_text('{"cover": {"published": true, "page_url": "https://www.ebay.com/itm/1"}}')
+        (self.work / ".gitignore").write_text("images/\n")
+        self.assertTrue(pipeline.publish(self.log.append, "images"))
+        changed = sorted(sh(self.work, "git", "show", "--name-only", "--format=", "HEAD").split())
+        self.assertEqual(changed, ["data/images.csv", "site_images/IMG_1__shelf__1/cover.jpg"])
+
     def test_update_refuses_over_unpublished_data(self):
         (self.work / "data/resolved.csv").write_text("a,b\n9,9\n")
         self.assertFalse(pipeline.update(self.log.append))

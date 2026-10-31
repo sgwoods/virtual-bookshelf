@@ -134,9 +134,28 @@ rotate in quarter turns. Saving moves the file out of Downloads into
 `images/<row id>/`: `cover.jpg` / `spine.jpg` (the crop) beside
 `cover.orig.*` / `spine.orig.*` (the download, kept for **re-crop**). Cropping
 runs in the browser, so nothing needs installing. `images/` is git-ignored:
-for now these are used by the review cards and the local preview
-(`build_site.py --local-images`, which Rebuild and Finish use) and are not
-published; publishing them is ROADMAP step 4c.
+full-size originals never leave the Mac.
+
+**Where each image came from** is recorded with it in
+`images/<row id>/meta.json`, without typing: for a browser download, from the
+"Where from" record macOS keeps (image and page address); for the **📚 Add to
+bookshelf** bookmark — dragged once from the review page to the bookmarks bar —
+from its request. On Google Images (or any page) you click the picture, then
+the bookmark: it opens a small window to the review page's `/grab` (guarded by
+a key kept in `~/.config/virtual-bookshelf/`), which fetches the full image
+into Downloads, so the card you came from picks it up as above. Each of your
+images shows its source on the card and an **On public site** switch (on by
+default).
+
+**Publishing.** Save & push and Finish first run
+`local_images.export_published`: a web-sized JPEG of each published image
+(covers 800 px, spines 1200 px on the long side, via macOS `sips`) goes to
+`site_images/<row id>/`, and the list with sources to `data/images.csv`; both
+are committed. Unpublishing removes the copy on the next push. The public
+build prefers, per book, your published image, then the Open Library cover,
+then the titled placeholder, and shows a small muted credit under the book
+("image · ebay.com", full address on hover). The local preview
+(`build_site.py --local-images`) uses all your images, published or not.
 
 When no candidate is right: **Search harder** runs wider Open Library and
 Google Books searches with more results; **Search by text or ISBN** searches

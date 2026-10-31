@@ -45,7 +45,7 @@ class Site(unittest.TestCase):
         for card in data:
             self.assertTrue(card["t"] and card["a"], card)
             self.assertIn(card["s"], ("unread", "reading", "read"))
-            self.assertTrue(card["c"] == "" or card["c"].startswith("https://"), card)
+            self.assertTrue(card["c"] == "" or card["c"].startswith(("https://", "site_images/")), card)
 
     def test_missing_covers_are_counted_not_dropped(self):
         self.assertEqual(self.n["covers_missing"], sum(1 for c in self.n["cards"] if not c["c"]))

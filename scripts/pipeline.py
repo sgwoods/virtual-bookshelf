@@ -15,9 +15,11 @@ Usage:
 `finish` is the one command to run after a review session. It stops at the
 first step that fails and says why. `publish` never commits to main: it puts
 the data on a review-YYYYMMDD-HHMM branch (or the review branch you are on),
-pushes it, and prints the link to open the pull request. It only ever adds
-data/books.csv, data/resolved.csv and data/overrides.csv — never photos,
-credentials or data/reading.csv.
+pushes it, and prints the link to open the pull request. First it writes
+web-sized copies of your published images to site_images/ and their sources
+to data/images.csv. It only ever adds data/books.csv, data/resolved.csv,
+data/overrides.csv, data/images.csv and site_images/ — never shelf photos,
+full-size originals (images/), credentials or data/reading.csv.
 
 Standard library only.
 """
@@ -32,7 +34,8 @@ from typing import Callable
 ROOT = Path(__file__).resolve().parent.parent
 PY = sys.executable
 REPO_URL = "https://github.com/sgwoods/virtual-bookshelf"
-DATA_FILES = ("data/books.csv", "data/resolved.csv", "data/overrides.csv")
+DATA_FILES = ("data/books.csv", "data/resolved.csv", "data/overrides.csv",
+              "data/images.csv", "site_images")   # the last two: your published images
 Log = Callable[[str], None]
 
 
@@ -64,7 +67,7 @@ def branch() -> str:
 
 def data_changes() -> list[str]:
     """Data files with uncommitted changes (modified or new)."""
-    out = git("status", "--porcelain", "--", *DATA_FILES)
+    out = git("status", "--porcelain", "--untracked-files=all", "--", *DATA_FILES)
     return [line[3:] for line in out.splitlines() if line.strip()]
 
 
@@ -117,7 +120,10 @@ def test(log: Log) -> bool:
 
 
 def publish(log: Log, message: str = "") -> bool:
-    """Commit the data files on a review branch and push it."""
+    """Publish your images (web-sized copies + sources), then commit the data
+    files on a review branch and push it."""
+    import local_images
+    local_images.export_published(ROOT, log)
     changes = data_changes()
     if not changes:
         log("Nothing to publish: no changes in " + ", ".join(DATA_FILES) + ".")
@@ -132,8 +138,8 @@ def publish(log: Log, message: str = "") -> bool:
     message = message or (f"Review pass: {s['decisions']} decisions; "
                           f"matched {lk.get('matched', 0)}, confirmed {lk.get('confirmed', 0)}, "
                           f"weak {lk.get('weak', 0)}, none {lk.get('none', 0)}")
-    files = [f for f in DATA_FILES if (ROOT / f).exists()]
-    ok = (run(["git", "add", "--", *files], log)
+    files = [f for f in DATA_FILES if (ROOT / f).exists() or git("ls-files", "--", f)]
+    ok = (run(["git", "add", "-A", "--", *files], log)
           and run(["git", "commit", "-m", message, "--", *files], log)
           and run(["git", "push", "-u", "origin", br], log))
     if ok:

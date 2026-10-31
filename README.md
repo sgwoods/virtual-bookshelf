@@ -128,7 +128,9 @@ optionally a `PUBLIC_HUB_DISPATCH_TOKEN` secret (fine-grained token, repo
 of on its daily run.
 
 Every book appears. Books without a confirmed cover get a titled card marked
-"Cover missing". Reading status comes from `data/reading.csv`, which is
+"Cover missing" — unless you have published your own image for it (review
+page → Add downloaded images / 📚 Add to bookshelf), which then shows with a
+small credit naming its source. Reading status comes from `data/reading.csv`, which is
 git-ignored: it shapes local previews only and is not published.
 
 ## Data conventions (`books.csv`)
