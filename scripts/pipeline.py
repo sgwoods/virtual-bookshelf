@@ -179,44 +179,68 @@ def publish(log: Log, message: str = "") -> bool:
 PHOTO_NAME = re.compile(r"^IMG_\d+\.(heic|jpe?g|png)$", re.I)
 
 
+def shelf_photo_names() -> set[str]:
+    """The shelf photos the catalogue was read from (data/drive_files.tsv), e.g. 'IMG_8879'."""
+    f = ROOT / "data/drive_files.tsv"
+    return {line.split("\t")[0] for line in open(f, encoding="utf-8") if line.strip()} if f.exists() else set()
+
+
 def import_photos(log: Log) -> bool:
-    """Shelf photos from Downloads into photos/: the newest Drive download (a .zip
-    of the folder) or loose IMG_*.HEIC files. Converts each with macOS `sips` to
+    """Shelf photos from Downloads into photos/, converted for the review page.
+
+    Looks in the newest Drive download .zip files, in folders directly inside
+    Downloads (an unzipped Drive download), and at loose files — but only takes
+    photos whose names are listed in data/drive_files.tsv, so other pictures in
+    Downloads are never touched. Converts each with macOS `sips` to
     photos/jpg/NAME.jpg (for zooming) and NAME_small.jpg (1600 px, for cards).
     photos/ is git-ignored; the photos stay private."""
     import local_images
+    wanted = shelf_photo_names()
     dl, raw, jpg = local_images.downloads_dir(), ROOT / "photos/raw", ROOT / "photos/jpg"
     raw.mkdir(parents=True, exist_ok=True)
     jpg.mkdir(parents=True, exist_ok=True)
-    got = 0
-    zips = sorted((p for p in dl.glob("*.zip") if p.is_file()), key=lambda p: -p.stat().st_mtime) if dl.is_dir() else []
-    for z in zips[:3]:
-        with zipfile.ZipFile(z) as zf:
-            members = [m for m in zf.namelist() if PHOTO_NAME.match(Path(m).name)]
-            for m in members:
-                (raw / Path(m).name).write_bytes(zf.read(m))
-            if members:
-                log(f"{z.name}: {len(members)} photos")
-                got += len(members)
-    for p in dl.glob("IMG_*") if dl.is_dir() else []:
-        if PHOTO_NAME.match(p.name):
-            shutil.copyfile(p, raw / p.name)
-            got += 1
-    if not got and not any(raw.iterdir()):
+
+    def ours(name: str) -> bool:
+        return bool(PHOTO_NAME.match(name)) and Path(name).stem in wanted
+
+    found = {}                                     # stem -> source description
+    if dl.is_dir():
+        zips = sorted((p for p in dl.glob("*.zip") if p.is_file()), key=lambda p: -p.stat().st_mtime)
+        for z in zips[:3]:
+            try:
+                with zipfile.ZipFile(z) as zf:
+                    for m in zf.namelist():
+                        name = Path(m).name
+                        if ours(name) and Path(name).stem not in found:
+                            (raw / name).write_bytes(zf.read(m))
+                            found[Path(name).stem] = z.name
+            except zipfile.BadZipFile:
+                log(f"{z.name}: not a readable zip, skipped")
+        for folder in [dl] + sorted(p for p in dl.iterdir() if p.is_dir()):
+            for p in folder.iterdir() if folder.is_dir() else []:
+                if p.is_file() and ours(p.name) and p.stem not in found:
+                    shutil.copyfile(p, raw / p.name)
+                    found[p.stem] = folder.name
+    for src in sorted(set(found.values())):
+        log(f"{src}: {sum(1 for v in found.values() if v == src)} shelf photos")
+    have = {p.stem for p in raw.iterdir() if ours(p.name)}
+    if not have:
         log("No shelf photos found in Downloads. Open the Drive folder, choose Download all, "
-            "and press Import shelf photos again once the .zip has arrived.")
+            "and press Import shelf photos again once it has arrived.")
         return False
+    missing = sorted(wanted - have)
+    if missing:
+        log(f"Not found yet: {', '.join(missing)}")
     sips = shutil.which("sips")
     made = 0
     for p in sorted(raw.iterdir()):
-        if not PHOTO_NAME.match(p.name):
+        if not ours(p.name):
             continue
-        name = p.stem
-        for out, size in ((jpg / f"{name}.jpg", 4000), (jpg / f"{name}_small.jpg", 1600)):
+        for out, size in ((jpg / f"{p.stem}.jpg", 4000), (jpg / f"{p.stem}_small.jpg", 1600)):
             if out.exists():
                 continue
             if sips:
-                r = subprocess.run([ "sips", "-s", "format", "jpeg", "-Z", str(size), str(p), "--out", str(out)],
+                r = subprocess.run(["sips", "-s", "format", "jpeg", "-Z", str(size), str(p), "--out", str(out)],
                                    capture_output=True, text=True)
                 if r.returncode != 0:
                     log(f"could not convert {p.name}: {r.stderr.strip()[:200]}")
@@ -226,7 +250,8 @@ def import_photos(log: Log) -> bool:
             else:
                 continue
             made += 1
-    log(f"Shelf photos ready: {len(list(jpg.glob('*_small.jpg')))} (converted {made} files) in photos/jpg/")
+    log(f"Shelf photos ready: {len(list(jpg.glob('*_small.jpg')))} of {len(wanted)} "
+        f"(converted {made} files) in photos/jpg/")
     return True
 
 

@@ -123,21 +123,40 @@ class Publish(unittest.TestCase):
         self.assertEqual(pipeline.branch(), "main")
         self.assertTrue((self.work / "new.txt").exists())
 
-    def test_import_shelf_photos_from_a_drive_download(self):
-        import os, zipfile
+    def downloads(self):
+        import os
         dl = self.tmp / "Downloads"
-        dl.mkdir()
+        dl.mkdir(exist_ok=True)
         os.environ["VB_DOWNLOADS"] = str(dl)
         self.addCleanup(os.environ.pop, "VB_DOWNLOADS", None)
-        with zipfile.ZipFile(dl / "drive-download-20261031.zip", "w") as z:
-            z.writestr("Bookshelf/IMG_8879.jpg", b"\xff\xd8one")
-            z.writestr("Bookshelf/IMG_8880.JPG", b"\xff\xd8two")
-            z.writestr("Bookshelf/notes.txt", b"not a photo")
+        (self.work / "data/drive_files.tsv").write_text("IMG_8879\tid1\nIMG_8880\tid2\nIMG_8881\tid3\n")
+        return dl
+
+    def test_import_shelf_photos_from_a_drive_download(self):
+        import zipfile
+        dl = self.downloads()
+        with zipfile.ZipFile(dl / "Books 20261030-20261031T151149Z-1-001.zip", "w") as z:
+            z.writestr("Books 20261030/IMG_8879.jpg", b"\xff\xd8one")
+            z.writestr("Books 20261030/IMG_8880.JPG", b"\xff\xd8two")
+            z.writestr("Books 20261030/IMG_9999.jpg", b"\xff\xd8not ours")
+            z.writestr("Books 20261030/notes.txt", b"not a photo")
         self.assertTrue(pipeline.import_photos(self.log.append))
-        names = sorted(p.name for p in (self.work / "photos/jpg").iterdir())
+        raw = sorted(p.name for p in (self.work / "photos/raw").iterdir())
+        self.assertEqual(raw, ["IMG_8879.jpg", "IMG_8880.JPG"])
         if not shutil.which("sips"):          # Linux CI: JPEGs are copied as they are
+            names = sorted(p.name for p in (self.work / "photos/jpg").iterdir())
             self.assertEqual(names, ["IMG_8879.jpg", "IMG_8879_small.jpg", "IMG_8880.jpg", "IMG_8880_small.jpg"])
-        self.assertFalse((self.work / "photos/raw/notes.txt").exists())
+        self.assertIn("Not found yet: IMG_8881", "\n".join(self.log))
+
+    def test_import_from_an_unzipped_folder_and_never_other_pictures(self):
+        dl = self.downloads()
+        (dl / "Books 20261030").mkdir()
+        (dl / "Books 20261030" / "IMG_8881.jpg").write_bytes(b"\xff\xd8three")
+        (dl / "IMG_7111.jpg").write_bytes(b"\xff\xd8a personal photo")
+        (dl / "Other").mkdir()
+        (dl / "Other" / "IMG_7232.jpg").write_bytes(b"\xff\xd8another")
+        self.assertTrue(pipeline.import_photos(self.log.append))
+        self.assertEqual(sorted(p.name for p in (self.work / "photos/raw").iterdir()), ["IMG_8881.jpg"])
 
     def test_import_says_what_to_do_when_nothing_is_there(self):
         import os
