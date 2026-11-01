@@ -93,7 +93,32 @@ Run modes: `python3 scripts/resolve.py` (new and changed rows; resumes),
 
 ## 4. Review and everyday actions — `scripts/review.py`, `scripts/pipeline.py`
 
-`python3 scripts/review.py` serves a local page at `http://127.0.0.1:8765/`.
+`python3 scripts/review.py` serves a local page at `http://127.0.0.1:8765/`
+(if that port is busy — say an older page is still open — it takes the next
+free one and says so).
+
+**One book at a time** (`/`, drawn by `scripts/focus_page.py`, queue in
+`scripts/review_queue.py`). Every book is in exactly one state: **to review**
+(needs a person and has no decision), **ready to publish** (decided here, not
+yet on GitHub — compared against `git show HEAD:data/overrides.csv`) or
+**published**. The header shows the three counts, a progress bar and
+**Publish N**. One book fills the page: on the left what is on the shelf — the
+spine cropped from its shelf photo (when `data/spines.csv` outlines it), the
+title and author as read with **✎ correct**, why it needs a person in plain
+words, and the shelf photo; on the right the options as large numbered tiles
+(cover, title, author, publisher, year, ISBN; the current match first and
+marked), already looked further for weak and missing matches, with **edit** on
+each tile for corrected details. Your images — from the 📚 bookmark or
+Downloads — appear above the tiles auto-cropped and selected, and are saved
+with whatever you choose. One click (or key) decides: a tile (1–9), **None of
+these — keep as read** (N), **Not a book** (B) or **Skip for now** (S, to the
+back of the queue). The decision is written to `data/overrides.csv` and
+applied to `data/resolved.csv` at once, the next book appears (looked up in
+advance), and a toast offers **Undo** (U). **Publish** runs `publish_main`.
+Less frequent actions are in the **⋯** menu; the older list of cards is at
+`/list`.
+
+**List view** (`/list`).
 
 **Cards.** First, every row whose spine read is below high confidence or whose
 lookup is weak, none or skipped. Then **quick checks**: confident matches whose
@@ -193,8 +218,9 @@ decisions and whether any data is not yet pushed, and buttons for the steps in
 | Apply decisions | `apply` | `resolve.py`: fold `data/overrides.csv` into `data/resolved.csv` |
 | Rebuild site | `build` | `build_site.py`, then opens the preview at `/site/` |
 | Run tests | `test` | the unit tests |
-| Save & push | `save` | apply, then commit the data files on a `review-YYYYMMDD-HHMM` branch (never `main`) and push it; the log links to the pull request |
-| Finish | `finish` | apply → build → test → push, stopping at the first failure, then preview |
+| Save & push | `save` | apply, then publish to `main` as below (the older `publish` step, data on a `review-YYYYMMDD-HHMM` branch with a pull request, is still available from Terminal) |
+| Finish | `finish` | apply → build → publish to main (tests first), stopping at the first failure, then preview |
+| Publish | `publish_main` | export published images, run the tests (stop if any fail), commit only the data files on `main`, `git pull --rebase --autostash`, push to `main`; code still arrives by pull request |
 
 **What is running** is shown small beside the title: build number (commits in
 this version), short commit, its date, and when the page was last started.
@@ -262,6 +288,7 @@ Standard library `unittest`, no network:
   must not (*Dune* / *Dune Messiah*, same title by another author).
 - `tests/test_site.py` — every catalogued book is on the page, the data is
   embedded and well-formed, and no external scripts or stylesheets are loaded.
+- `tests/test_review_queue.py` — the queue's states, decide-and-apply, undo and skip.
 - `tests/test_review.py` — the quick-check rule, that the page script parses,
   and that requests without the token or from another host are refused.
 - `tests/test_pipeline.py` — against a throwaway repository with a local

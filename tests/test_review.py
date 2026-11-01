@@ -71,7 +71,7 @@ class PageScript(unittest.TestCase):
     def test_script_parses(self):
         # A syntax error anywhere disables every button on the page.
         with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
-            f.write(review.JS)
+            f.write(review.JS + "\n" + review.focus_page.JS)
         r = subprocess.run(["node", "--check", f.name], capture_output=True, text=True)
         Path(f.name).unlink()
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -148,6 +148,26 @@ class Guard(unittest.TestCase):
                                   {"X-Review-Token": review.TOKEN})
         self.assertEqual(code, 409)
         self.assertIn("unknown", body)
+
+    def test_one_book_routes_need_the_token(self):
+        for path in ("/api/next", "/api/book", "/api/decide", "/api/undo", "/api/skip", "/api/warm"):
+            with self.subTest(path):
+                code, _ = self.request("POST", path, {"row_id": "x", "decision": "not-a-book"})
+                self.assertEqual(code, 403)
+
+    def test_bad_decision_is_refused(self):
+        code, _ = self.request("POST", "/api/decide", {"row_id": "x", "decision": "rm -rf"},
+                               {"X-Review-Token": review.TOKEN})
+        self.assertEqual(code, 400)
+
+    def test_main_page_is_one_book_at_a_time_and_list_is_kept(self):
+        code, body = self.request("GET", "/")
+        self.assertEqual(code, 200)
+        self.assertIn('id="pubbtn"', body)
+        self.assertIn("nextBook(", body)
+
+    def test_publish_is_an_action(self):
+        self.assertEqual(review.ACTIONS["publish"][1], "publish_main")
 
     def test_restart_needs_the_token(self):
         code, _ = self.request("POST", "/restart", {})
