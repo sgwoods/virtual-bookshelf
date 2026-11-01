@@ -8,18 +8,21 @@ Usage:
     python3 scripts/pipeline.py apply     # fold review decisions into data/resolved.csv
     python3 scripts/pipeline.py build     # build the site into _site/
     python3 scripts/pipeline.py test      # run the test suite
-    python3 scripts/pipeline.py publish   # commit data/ on a review branch and push it
-    python3 scripts/pipeline.py save      # apply, then publish
-    python3 scripts/pipeline.py finish    # apply → build → test → publish, then preview
+    python3 scripts/pipeline.py publish_main   # publish: test, commit data, push to main
+    python3 scripts/pipeline.py publish   # older route: data on a review branch + pull request
+    python3 scripts/pipeline.py save      # apply, then publish_main
+    python3 scripts/pipeline.py finish    # apply → build → publish_main, then preview
 
-`finish` is the one command to run after a review session. It stops at the
-first step that fails and says why. `publish` never commits to main: it puts
-the data on a review-YYYYMMDD-HHMM branch (or the review branch you are on),
-pushes it, and prints the link to open the pull request. First it writes
-web-sized copies of your published images to site_images/ and their sources
-to data/images.csv. It only ever adds data/books.csv, data/resolved.csv,
-data/overrides.csv, data/images.csv and site_images/ — never shelf photos,
-full-size originals (images/), credentials or data/reading.csv.
+`publish_main` is what the review page's Publish button runs: it writes web-sized
+copies of your published images to site_images/ and their sources to
+data/images.csv, runs the tests (and stops, pushing nothing, if they fail),
+commits the data files on main, brings in GitHub's latest, and pushes. The
+site's own CI runs the tests again before it deploys. Only data goes this way;
+code changes still arrive as reviewed pull requests.
+
+Publishing only ever adds data/books.csv, data/resolved.csv, data/overrides.csv,
+data/images.csv and site_images/ — never shelf photos, full-size originals
+(images/), credentials or data/reading.csv.
 
 Standard library only.
 """
@@ -269,9 +272,68 @@ STEPS: dict[str, Callable[[Log], bool]] = {
 }
 
 
+def fold_decisions(log: Log) -> None:
+    """Make sure every decision in data/overrides.csv is reflected in
+    data/resolved.csv (the one-book page does this as you go; decisions made in
+    the older list view are folded in here). No network."""
+    import csv
+    import resolve
+    ov_path, res_path = ROOT / "data/overrides.csv", ROOT / "data/resolved.csv"
+    if not (ov_path.exists() and res_path.exists()):
+        return
+    ov = {r["row_id"]: r for r in csv.DictReader(open(ov_path, encoding="utf-8"))}
+    with open(res_path, encoding="utf-8") as f:
+        rd = csv.DictReader(f)
+        fields, rows = rd.fieldnames or [], list(rd)
+    if not ov or "row_id" not in fields:
+        return
+    out = [{k: v for k, v in resolve.apply_override(r, ov[r["row_id"]]).items() if k in fields}
+           if r["row_id"] in ov else r for r in rows]
+    if out != rows:
+        with open(res_path, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=fields); w.writeheader(); w.writerows(out)
+        log(f"Applied {sum(a != b for a, b in zip(out, rows))} decision(s) to data/resolved.csv.")
+
+
+def publish_main(log: Log) -> bool:
+    """Publish the review: images → tests → commit data on main → pull → push."""
+    import local_images
+    br = branch()
+    if br != "main":
+        log(f"Publishing goes from main, but this copy is on '{br}'. Use Get latest first.")
+        return False
+    fold_decisions(log)
+    local_images.export_published(ROOT, log)
+    if not data_changes():
+        log("Nothing new to publish.")
+        return True
+    log("\n== tests")
+    if not test(log):
+        log("\nTests failed — nothing was published.")
+        return False
+    s = status()
+    lk = s["lookup"]
+    n = s['decisions']
+    message = (f"Review: {n} decision{'s' if n != 1 else ''}; matched {lk.get('matched', 0)}, "
+               f"confirmed {lk.get('confirmed', 0) + lk.get('confirmed-unlisted', 0)}, "
+               f"to review {lk.get('weak', 0) + lk.get('none', 0)}")
+    files = [f for f in DATA_FILES if (ROOT / f).exists() or git("ls-files", "--", f)]
+    log("\n== publish")
+    if not (run(["git", "add", "-A", "--", *files], log)
+            and run(["git", "commit", "-m", message, "--", *files], log)):
+        return False
+    if not run(["git", "pull", "--rebase", "--autostash", "origin", "main"], log):
+        log("Could not bring in GitHub's latest, so nothing was pushed. Your work is committed locally.")
+        return False
+    if not run(["git", "push", "origin", "HEAD:main"], log):
+        return False
+    log("\nPublished. The public site updates in a few minutes: https://sgwoods.github.io/virtual-bookshelf/")
+    return True
+
+
 def finish(log: Log) -> bool:
-    """apply → build → test → publish, stopping at the first failure; then preview."""
-    for name in ("apply", "build", "test", "publish"):
+    """apply → build → publish_main (which runs the tests), stopping at the first failure; then preview."""
+    for name in ("apply", "build", "publish_main"):
         log(f"\n== {name}")
         if not STEPS[name](log):
             log(f"\nStopped: '{name}' failed. Nothing after it ran.")
@@ -282,14 +344,15 @@ def finish(log: Log) -> bool:
 
 
 def save(log: Log) -> bool:
-    """apply → publish: fold decisions in, then commit and push the data."""
-    return apply(log) and publish(log)
+    """apply → publish_main: fold decisions in, then publish."""
+    return apply(log) and publish_main(log)
 
 
 STEPS["finish"] = finish
 STEPS["update_code"] = update_code
 STEPS["import_photos"] = import_photos
 STEPS["save"] = save
+STEPS["publish_main"] = publish_main
 
 
 def main():

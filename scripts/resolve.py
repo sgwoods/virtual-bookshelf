@@ -19,7 +19,7 @@ Manual decisions from the review page live in data/overrides.csv and always win.
 from __future__ import annotations
 
 import argparse, csv, difflib, hashlib, json, re, sys, time, unicodedata
-import urllib.parse, urllib.request
+import urllib.error, urllib.parse, urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -124,11 +124,17 @@ def _score(want_title: str, sn: str, got_title: str, got_authors: list[str]) -> 
 _last = [0.0]
 
 
+RESTING: dict[str, float] = {}       # host -> time until which we leave it alone (after a 429)
+
+
 def get_json(url: str) -> dict:
     CACHE.mkdir(parents=True, exist_ok=True)
     f = CACHE / (hashlib.sha1(url.encode()).hexdigest() + ".json")
     if f.exists():
         return json.loads(f.read_text())
+    host = urllib.parse.urlparse(url).hostname or ""
+    if RESTING.get(host, 0) > time.time():
+        return {}
     wait = 1.0 - (time.time() - _last[0])
     if wait > 0:
         time.sleep(wait)
@@ -138,7 +144,17 @@ def get_json(url: str) -> dict:
             with urllib.request.urlopen(req, timeout=30) as r:
                 data = json.load(r)
             break
-        except Exception as e:                     # network hiccup / 5xx / 429
+        except urllib.error.HTTPError as e:
+            if e.code == 429:                      # daily/rate limit: back off for an hour, quietly
+                if RESTING.get(host, 0) <= time.time():
+                    print(f"    · {host} says too many requests; leaving it alone for an hour", file=sys.stderr)
+                RESTING[host] = time.time() + 3600
+                return {}
+            if attempt == 2:
+                print(f"    ! {e} — {url}", file=sys.stderr)
+                return {}
+            time.sleep(3 * (attempt + 1))
+        except Exception as e:                     # network hiccup / 5xx
             if attempt == 2:
                 print(f"    ! {e} — {url}", file=sys.stderr)
                 return {}
@@ -237,13 +253,15 @@ def first(v) -> str:
     return (v[0] if v else "") if isinstance(v, list) else (v or "")
 
 
-def search_more(row: dict, q: str = "", isbn: str = "", n: int = 12) -> list[dict]:
+def search_more(row: dict, q: str = "", isbn: str = "", n: int = 12, gentle: bool = False) -> list[dict]:
     """'Search harder' on the review page: wider queries, or a person's own text or ISBN.
 
     With an ISBN, look it up directly on Open Library and Google Books — the
     surest way to find a book in hand. With free text, search for exactly that.
     Otherwise try the combinations the main run doesn't, with more results each.
-    Every candidate is scored against the spine read, best first."""
+    Every candidate is scored against the spine read, best first. `gentle` (used
+    for automatic look-ahead) only asks Google Books when Open Library finds
+    little, to stay within its daily limit."""
     title, author = row["title"], row["author"]
     ct, fa, sn = clean_title(title), first_author(author), surname(author)
     isbn = re.sub(r"[^0-9Xx]", "", isbn or "")
@@ -263,7 +281,8 @@ def search_more(row: dict, q: str = "", isbn: str = "", n: int = 12) -> list[dic
         for d in ol_search(fields=OL_FIELDS + ",publisher", **params):
             d["source"] = "openlibrary"
             cands.append(d)
-    for gq in gb_queries:
+    ol_good = sum(1 for d in cands if score(title, author, d.get("title", ""), d.get("author_name", [])) >= WEAK)
+    for gq in gb_queries if not (gentle and ol_good >= 2) else []:
         cands += gb_search(ct, fa, q=gq, n=10)
     for d in cands:
         d["_score"] = score(title, author, d.get("title", ""), d.get("author_name", []))

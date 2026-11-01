@@ -37,7 +37,7 @@ scripts/
   report.py          counts, top authors, review queue from books.csv
   resolve.py         match each book on Open Library (Google Books fallback)
                      → data/resolved.csv
-  review.py          local review page and control panel: decisions →
+  review.py          local review page (one book at a time) and control panel: decisions →
                      data/overrides.csv; buttons for the pipeline steps
   pipeline.py        update / retry / apply / build / test / publish / finish
   build_site.py      cover-grid page → _site/index.html (git-ignored)
@@ -86,12 +86,13 @@ python3 scripts/review.py
 
 That opens the review page — the last Terminal command you need: when a new
 version is on GitHub the page shows a banner, and **Update & restart** brings
-it in and reloads. Work through the cards, then use the buttons along the
-top: **Get latest** (the same update, then restart), **Retry lookups**, **Apply
-decisions**, **Rebuild site** (opens a preview), **Run tests**, **Save & push**
-(commits the data on a review branch and pushes it), or **Finish** — apply,
-rebuild, test and push in one go. The log at the bottom ends with the link to
-open the pull request; merging it on GitHub redeploys the site.
+it in and reloads. The page shows **one book at a time**: click the right
+option (or press 1–9), or **None of these** (N), **Not a book** (B), **Skip**
+(S); the decision is applied at once and the next book appears, with **Undo**
+(U). Then press **Publish**: it runs the tests and pushes the data to GitHub,
+and the public site updates a few minutes later. Everything else (get latest,
+import shelf photos, retry lookups, rebuild & preview, run tests, the older
+list view) is in the **⋯** menu.
 
 The same steps without the page:
 

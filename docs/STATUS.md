@@ -3,7 +3,20 @@
 This is the dated log of work and results. What exists and how it works is in
 [ARCHITECTURE.md](ARCHITECTURE.md); what comes next is in [ROADMAP.md](ROADMAP.md).
 
-## Latest (Oct 31)
+## Latest (Nov 1)
+
+- **One book at a time.** The review page now shows a single book: the spine
+  and what was read on the left, the options as big numbered tiles on the
+  right (already looked further), your own images auto-cropped above them.
+  One click or key decides; the decision is applied at once, the book leaves
+  the queue, and Undo is offered. The header counts *to review · ready to
+  publish · published*, and **Publish** runs the tests and pushes the data
+  straight to `main` (code still goes by pull request). Rarer actions moved
+  to a ⋯ menu; the old list is at `/list`. Also: Google Books "too many
+  requests" now backs off quietly for an hour, look-ahead searches are gentle
+  on it, and the page moves to the next free port if 8765 is busy. 91 tests.
+
+## Oct 31
 
 - **Spines outlined, auto-crop, Google in a side window.** The review card
   outlines the book's spine on its shelf photo (from `data/spines.csv`) and

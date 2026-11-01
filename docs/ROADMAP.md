@@ -41,7 +41,9 @@ real test. Expect most of the
 classic SF to match cleanly; the likely misses are the CS monographs, the
 theses, the exhibition catalogues and the Coteau/Red Deer small-press books.
 
-### 2. Review page  ✅ built — `scripts/review.py` · review not yet done (32 cards queued)
+### 2. Review page  ✅ built — `scripts/review.py` · review in progress (59 books queued)
+**Nov 1:** reworked as one book at a time — decide with one click, applied at
+once, Undo, and Publish straight to `main` (data only).
 A single local page listing every row that is (a) below high confidence from
 the spine read, or (b) a weak/no Open Library match. Each row shows the
 spine read, a link to its shelf photo, and up to four candidates with covers;

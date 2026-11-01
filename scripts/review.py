@@ -2,10 +2,14 @@
 """Local review page for the catalogue — and the control panel for everyday actions.
 
 Usage:  python3 scripts/review.py            # opens http://127.0.0.1:8765
-        python3 scripts/review.py --all      # show every row, not just the queue
+        python3 scripts/review.py --all      # old list view: every row, not just the queue
         python3 scripts/review.py --port 9000 --no-browser
 
-Shows each book that needs a human: weak or missing Open Library match, or a
+The main page (/) shows one book at a time — see scripts/focus_page.py and
+scripts/review_queue.py: pick an option and it is applied at once, the book
+leaves the queue, and Publish pushes everything that is ready to main.
+
+The older list view (/list) shows each book that needs a human: weak or missing Open Library match, or a
 spine read below high confidence. After those come quick checks: matches that
 dropped the spine's subtitle (e.g. "Manifold: Time" → "Manifold"), which are
 usually right but sometimes another book. For each card you can
@@ -34,9 +38,11 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import focus_page                                  # noqa: E402
 import local_images                                # noqa: E402
 import pipeline                                    # noqa: E402
 import resolve                                     # noqa: E402
+import review_queue                                # noqa: E402
 from resolve import clean_title, norm              # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -69,6 +75,7 @@ ACTIONS = {           # button → (label, pipeline step, reload cards afterward
     "test":    ("Run tests",         "test",    False),
     "save":    ("Save & push",       "save",    True),
     "finish":  ("Finish",            "finish",  True),
+    "publish": ("Publish",           "publish_main", True),
 }
 
 
@@ -83,9 +90,16 @@ def check_version(max_age: float = 300) -> dict:
         n = pipeline.behind()
         with VERSION_LOCK:
             VERSION["behind"] = max(n, 0)
+    return {"behind": VERSION["behind"], "restart_needed": code_changed(), "run": RUN_ID}
+
+
+def code_changed() -> bool:
+    """Has the page's own code changed since this process started? (Publishing
+    commits data, which needs no restart.)"""
     head = pipeline.git("rev-parse", "HEAD")
-    return {"behind": VERSION["behind"], "restart_needed": bool(STARTED_HEAD and head and head != STARTED_HEAD),
-            "run": RUN_ID}
+    if not (STARTED_HEAD and head and head != STARTED_HEAD):
+        return False
+    return bool(pipeline.git("diff", "--name-only", STARTED_HEAD, head, "--", "scripts", "site"))
 
 
 def build_label() -> dict:
@@ -916,7 +930,7 @@ def page():
 <style>{CSS}</style></head><body data-token="{esc(TOKEN)}">
 <header><h1>Bookshelf review</h1>{version_html()}<span class="count"><b id="left">{left}</b> of {len(every)} left</span>
 <div class="bar"><i style="width:{pct:.0f}%"></i></div>
-<a href="/?all={'0' if SHOW_ALL else '1'}">{'queue only' if SHOW_ALL else 'show all books'}</a>
+<a href="/">one at a time</a> · <a href="/list?all={'0' if SHOW_ALL else '1'}">{'queue only' if SHOW_ALL else 'show all books'}</a>
 {tools_bar()}<div id="newver" class="newver"></div></header>
 {hint}<main>{body}</main>
 <div id="lb" class="lb" onclick="lbClick(event)"><span class="lbwrap"><img alt=""><div class="lbbox"></div></span><div class="lbcap"></div></div>
@@ -933,6 +947,67 @@ def page():
 <div id="log"><div class="lh"><b>Actions</b><span id="jobstate"></span>
 <button onclick="closeLog()">Hide</button></div><pre id="logtext"></pre></div>
 <script>{JS}</script></body></html>"""
+
+
+# ---------------------------------------------------------------- one book at a time
+def photo_urls(photo: str, drive: dict):
+    """(small, big) URLs for a shelf photo: the local copy, else Drive's thumbnail."""
+    if (PHOTOS / f"{photo}_small.jpg").exists():
+        return f"/photo/{photo}", f"/photo/{photo}?full=1"
+    if photo in drive:
+        fid = drive[photo]
+        return (f"https://drive.google.com/thumbnail?id={fid}&sz=w1600",
+                f"https://drive.google.com/thumbnail?id={fid}&sz=w4000")
+    return None
+
+
+def focus_book(row_id: str, counts: dict | None = None, after: list | None = None) -> dict:
+    """Everything the one-book page draws for one book."""
+    st = review_queue.state()
+    b = review_queue.book(row_id)
+    drive = load()[3]
+    row = {"photo": b["photo"], "stack": b["stack"], "position": b["position"],
+           "title": b["title"], "author": b["author"]}
+    box = spine_boxes().get(row_id)
+    urls = photo_urls(b["photo"], drive)
+    spine = None
+    if box and urls:
+        where = f"{b['stack']} stack, #{b['position']}" if b["stack"] not in ("shelf", "") else f"#{b['position']}"
+        spine = {"small": urls[0], "big": urls[1], "box": box, "cap": f"{b['photo']} — {where}"}
+    own = [{"kind": k, "url": "/" + rel, **local_images.describe(row_id, k)}
+           for k, rel in local_images.images_for(row_id).items()]
+    order = [x for x in st["order"] if x != row_id]
+    return {"counts": {k: st[k] for k in ("to_review", "ready", "published", "total")},
+            "book": b, "spine": spine, "shelf_html": shelf_photo(row, drive),
+            "google_url": image_search_url(row), "own": own,
+            "auto_find": b["status"] in ("weak", "none") and not b["unreadable"],
+            "next": order[0] if order else ""}
+
+
+def focus_next() -> dict:
+    st = review_queue.state()
+    if not st["order"]:
+        return {"counts": {k: st[k] for k in ("to_review", "ready", "published", "total")}, "book": None}
+    return focus_book(st["order"][0])
+
+
+WARMED: set = set()
+
+
+def warm(row_id: str) -> None:
+    """Look the next book up in the background so its options are ready (cached)."""
+    if row_id in WARMED:
+        return
+    WARMED.add(row_id)
+    def go():
+        try:
+            b = next(x for x in csv.DictReader(open(BOOKS, encoding="utf-8")) if rid(x) == row_id)
+            r = next((x for x in csv.DictReader(open(RESOLVED, encoding="utf-8")) if x["row_id"] == row_id), {})
+            if r.get("status") in ("weak", "none") and not b["title"].lower().startswith("unknown"):
+                resolve.search_more(b, gentle=True)
+        except Exception:
+            pass
+    threading.Thread(target=go, daemon=True).start()
 
 
 # ---------------------------------------------------------------- jobs
@@ -1038,6 +1113,10 @@ class H(BaseHTTPRequestHandler):
                 return self.send(200, f.read_bytes())
             return self.send(404, "No site built yet — press Rebuild site.", "text/plain")
         if u.path == "/":
+            return self.send(200, focus_page.page(CSS, JS, esc(TOKEN), version_html(),
+                                                  f'<a class="bm" href="{esc(bookmarklet())}" '
+                                                  f'onclick="event.preventDefault()">📚 Add to bookshelf</a>'))
+        if u.path == "/list":
             q = parse_qs(u.query)
             if "all" in q: SHOW_ALL = q["all"][0] == "1"
             return self.send(200, page())
@@ -1117,8 +1196,25 @@ class H(BaseHTTPRequestHandler):
             if self.path == "/search":
                 books = {rid(b): b for b in csv.DictReader(open(BOOKS, encoding="utf-8"))}
                 row = books[data["row_id"]]
-                found = resolve.search_more(row, str(data.get("q", "")), str(data.get("isbn", "")))
+                found = resolve.search_more(row, str(data.get("q", "")), str(data.get("isbn", "")),
+                                            gentle=bool(data.get("gentle")))
                 return self.send(200, json.dumps(found), "application/json")
+            if self.path == "/api/next":
+                return self.send(200, json.dumps(focus_next()), "application/json")
+            if self.path == "/api/book":
+                return self.send(200, json.dumps(focus_book(str(data["row_id"]))), "application/json")
+            if self.path == "/api/decide":
+                review_queue.decide(str(data["row_id"]), str(data["decision"]), str(data.get("pick_json") or ""))
+                return self.send(200, "ok", "text/plain")
+            if self.path == "/api/undo":
+                review_queue.undo(str(data["row_id"]))
+                return self.send(200, "ok", "text/plain")
+            if self.path == "/api/skip":
+                review_queue.skip(str(data["row_id"]))
+                return self.send(200, "ok", "text/plain")
+            if self.path == "/api/warm":
+                warm(str(data["row_id"]))
+                return self.send(200, "ok", "text/plain")
             if self.path == "/decide":
                 if data["decision"] not in ("pick", "accept", "no-match", "not-a-book", "undo"):
                     raise ValueError("bad decision")
@@ -1142,13 +1238,19 @@ def main():
     SHOW_ALL, PORT = a.all, a.port
     global STARTED_HEAD
     STARTED_HEAD = pipeline.git("rev-parse", "HEAD")
-    try:
-        srv = ThreadingHTTPServer(("127.0.0.1", a.port), H)
-    except OSError:
-        sys.exit(f"Port {a.port} is busy — the review page is probably already open in another "
-                 f"Terminal window (http://127.0.0.1:{a.port}/). Use that one, or run with "
-                 f"--port {a.port + 1}.")
-    url = f"http://127.0.0.1:{a.port}/"
+    srv = None
+    for port in range(a.port, a.port + 10):
+        try:
+            srv = ThreadingHTTPServer(("127.0.0.1", port), H)
+            break
+        except OSError:
+            print(f"Port {port} is busy (another review page may be open there) — trying {port + 1}…")
+    if srv is None:
+        sys.exit(f"Ports {a.port}–{a.port + 9} are all busy. Close other review pages' Terminal windows and try again.")
+    if port != a.port:
+        print(f"Using port {port}. If you use the 📚 bookmark, drag it to the bookmarks bar again from the ⋯ menu.")
+    PORT = port
+    url = f"http://127.0.0.1:{port}/"
     print(f"review page: {url}   (Ctrl-C to stop)")
     if not a.no_browser:
         threading.Timer(0.5, webbrowser.open, [url]).start()

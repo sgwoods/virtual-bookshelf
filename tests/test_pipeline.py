@@ -177,6 +177,62 @@ class Publish(unittest.TestCase):
         self.assertTrue(pipeline.update(self.log.append))
         self.assertEqual(pipeline.branch(), "main")
 
+    def stub_tests(self, ok=True):
+        real = pipeline.test
+        pipeline.test = lambda log: ok
+        self.addCleanup(setattr, pipeline, "test", real)
+
+    def test_publish_main_pushes_data_only_to_main(self):
+        self.stub_tests()
+        (self.work / "data/overrides.csv").write_text("row_id,decision\nx,accept\n")
+        (self.work / "notes.txt").write_text("code change, not data\n")
+        self.advance_origin()                                  # GitHub moved on meanwhile
+        self.assertTrue(pipeline.publish_main(self.log.append), "\n".join(self.log))
+        self.assertEqual(pipeline.branch(), "main")
+        self.assertEqual(sh(self.work, "git", "rev-parse", "HEAD"), sh(self.work, "git", "rev-parse", "origin/main"))
+        self.assertEqual(sh(self.work, "git", "show", "--name-only", "--format=", "HEAD").split(), ["data/overrides.csv"])
+        self.assertIn("Review: ", sh(self.work, "git", "log", "-1", "--format=%s"))
+        self.assertIn("notes.txt", sh(self.work, "git", "status", "--porcelain"), "code is never published this way")
+        self.assertTrue((self.work / "new.txt").exists())
+
+    def test_publish_main_folds_in_decisions_from_the_list_view(self):
+        import csv as _csv
+        import json as _json
+        import resolve
+        self.stub_tests()
+        row = dict.fromkeys(resolve.OUT_FIELDS, "")
+        row.update(row_id="IMG_1:shelf:1", status="weak")
+        with open(self.work / "data/resolved.csv", "w", newline="") as f:
+            w = _csv.DictWriter(f, fieldnames=resolve.OUT_FIELDS); w.writeheader(); w.writerow(row)
+        sh(self.work, "git", "commit", "-qam", "resolved")
+        sh(self.work, "git", "push", "-q")
+        pick = _json.dumps({"source": "openlibrary", "work_id": "/works/W1", "title": "Wake"})
+        with open(self.work / "data/overrides.csv", "w", newline="") as f:
+            w = _csv.writer(f); w.writerow(["row_id", "decision", "pick_json", "note", "decided_at"])
+            w.writerow(["IMG_1:shelf:1", "pick", pick, "", ""])
+        self.assertTrue(pipeline.publish_main(self.log.append), "\n".join(self.log))
+        got = next(_csv.DictReader(open(self.work / "data/resolved.csv")))
+        self.assertEqual((got["status"], got["match_title"]), ("confirmed", "Wake"))
+
+    def test_publish_main_with_nothing_new(self):
+        self.stub_tests()
+        self.assertTrue(pipeline.publish_main(self.log.append))
+        self.assertIn("Nothing new to publish", "\n".join(self.log))
+
+    def test_publish_main_stops_when_tests_fail(self):
+        self.stub_tests(False)
+        before = sh(self.work, "git", "rev-parse", "origin/main")
+        (self.work / "data/resolved.csv").write_text("a,b\n5,5\n")
+        self.assertFalse(pipeline.publish_main(self.log.append))
+        self.assertEqual(sh(self.work, "git", "rev-parse", "origin/main"), before)
+        self.assertIn("nothing was published", "\n".join(self.log))
+
+    def test_publish_main_only_from_main(self):
+        self.stub_tests()
+        sh(self.work, "git", "checkout", "-q", "-b", "review-x")
+        (self.work / "data/resolved.csv").write_text("a,b\n5,5\n")
+        self.assertFalse(pipeline.publish_main(self.log.append))
+
     def test_branch_name(self):
         self.assertEqual(pipeline.review_branch_name(datetime(2026, 10, 31, 8, 5)), "review-20261031-0805")
 
