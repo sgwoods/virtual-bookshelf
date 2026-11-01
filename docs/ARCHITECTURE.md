@@ -93,9 +93,20 @@ Run modes: `python3 scripts/resolve.py` (new and changed rows; resumes),
 
 ## 4. Review and everyday actions — `scripts/review.py`, `scripts/pipeline.py`
 
-`python3 scripts/review.py` serves a local page at `http://127.0.0.1:8765/`
-(if that port is busy — say an older page is still open — it takes the next
-free one and says so).
+`python3 scripts/review.py` serves a local page at `http://127.0.0.1:8765/`.
+
+**Local ports** (`scripts/localport.py`) follow the agreement shared by
+Steven's projects: each owns a block of ten ports and runs one copy at a time —
+8760–8769 virtual-bookshelf (default 8765), 8770–8779 news, 8780–8789 aurora,
+8790–8799 Star Swarm. On start the page stops its own older copy (found from
+`~/.config/virtual-bookshelf/server.json` and confirmed by its `/whoami`, or,
+for copies from before the agreement, by being this repository's `review.py`),
+never another project's server, then binds inside its block, default first.
+It records itself in `server.json` (removed on a clean exit) and adds its line
+to the shared `~/.config/local-ports.tsv`, warning if blocks overlap.
+`GET /whoami` answers `{"project", "port", "pid", "version"}`; the tab title,
+favicon and header label name the project and port; `python3 scripts/review.py
+--status` lists which registered projects are running, where.
 
 **One book at a time** (`/`, drawn by `scripts/focus_page.py`, queue in
 `scripts/review_queue.py`). Every book is in exactly one state: **to review**
@@ -288,6 +299,7 @@ Standard library `unittest`, no network:
   must not (*Dune* / *Dune Messiah*, same title by another author).
 - `tests/test_site.py` — every catalogued book is on the page, the data is
   embedded and well-formed, and no external scripts or stylesheets are loaded.
+- `tests/test_localport.py` — the port block, replacing only its own older copy (with real processes), the shared registry.
 - `tests/test_review_queue.py` — the queue's states, decide-and-apply, undo and skip.
 - `tests/test_review.py` — the quick-check rule, that the page script parses,
   and that requests without the token or from another host are refused.

@@ -350,10 +350,10 @@ nextBook('');
 """
 
 
-def page(css: str, js: str, token: str, version_html: str, bookmark_html: str) -> str:
+def page(css: str, js: str, token: str, version_html: str, bookmark_html: str, port: int = 0, favicon: str = "") -> str:
     body = BODY.replace("__VERSION__", version_html).replace("__BOOKMARK__", bookmark_html)
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>Bookshelf review</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>📚 Bookshelf · {port}</title>{favicon}
 <style>{css}{CSS}</style></head><body data-token="{token}">
 {body}
 <div id="lb" class="lb" onclick="lbClick(event)"><span class="lbwrap"><img alt=""><div class="lbbox"></div></span><div class="lbcap"></div></div>
