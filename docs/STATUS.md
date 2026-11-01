@@ -5,6 +5,13 @@ This is the dated log of work and results. What exists and how it works is in
 
 ## Latest (Nov 1)
 
+- **Shared localhost agreement.** Each local project owns ten ports
+  (bookshelf 8760–8769, news 8770–8779, aurora 8780–8789, Star Swarm
+  8790–8799) and runs one copy at a time: starting the review page stops its
+  own older copy — including ones from before the agreement — and never
+  another project's server. `/whoami`, a 📚 tab titled with the port, a
+  shared `~/.config/local-ports.tsv`, and `review.py --status`. 97 tests.
+
 - **One book at a time.** The review page now shows a single book: the spine
   and what was read on the left, the options as big numbered tiles on the
   right (already looked further), your own images auto-cropped above them.

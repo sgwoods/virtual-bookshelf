@@ -32,13 +32,14 @@ so other websites open in the browser cannot drive these actions.
 """
 from __future__ import annotations
 
-import argparse, base64, csv, html, json, os, secrets, sys, threading, time, webbrowser
+import argparse, atexit, base64, csv, html, json, os, secrets, signal, sys, threading, time, webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import focus_page                                  # noqa: E402
+import localport                                   # noqa: E402
 import local_images                                # noqa: E402
 import pipeline                                    # noqa: E402
 import resolve                                     # noqa: E402
@@ -871,13 +872,17 @@ def card(b, r, ov, drive, check=False):
 </section>"""
 
 
+FAVICON = ('<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 '
+           'viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📚</text></svg>">')
+
+
 def version_html() -> str:
     v = build_label()
     if not v["commit"]:
-        return ""
+        return f'<span class="ver">virtual-bookshelf · port {PORT}</span>'
     return (f'<span class="ver" title="Build = number of changes in this version; started = when this page was last '
-            f'(re)started">build {esc(v["build"])} · {esc(v["commit"])} · {esc(v["date"])} · '
-            f'started {esc(v["started"])}</span>')
+            f'(re)started">virtual-bookshelf · port {PORT} · build {esc(v["build"])} · {esc(v["commit"])} · '
+            f'{esc(v["date"])} · started {esc(v["started"])}</span>')
 
 
 def tools_bar():
@@ -926,7 +931,7 @@ def page():
                            'run <code>python3 scripts/resolve.py</code> first to get Open Library candidates.</p>')
     pct = 100 * (len(every) - left) / len(every) if every else 100
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>Bookshelf Review</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>📚 Bookshelf list · {PORT}</title>{FAVICON}
 <style>{CSS}</style></head><body data-token="{esc(TOKEN)}">
 <header><h1>Bookshelf review</h1>{version_html()}<span class="count"><b id="left">{left}</b> of {len(every)} left</span>
 <div class="bar"><i style="width:{pct:.0f}%"></i></div>
@@ -1103,6 +1108,10 @@ class H(BaseHTTPRequestHandler):
         if u.path == "/version":
             fresh = parse_qs(u.query).get("fresh") == ["1"]
             return self.send(200, json.dumps(check_version(60 if fresh else 300)), "application/json")
+        if u.path == "/whoami":
+            return self.send(200, json.dumps({"project": localport.PROJECT, "port": PORT, "pid": os.getpid(),
+                                              "version": pipeline.git("rev-parse", "--short", "HEAD")}),
+                             "application/json")
         if u.path == "/job":
             with JOB_LOCK:
                 return self.send(200, json.dumps({k: v for k, v in JOB.items() if k != "started"}),
@@ -1115,7 +1124,8 @@ class H(BaseHTTPRequestHandler):
         if u.path == "/":
             return self.send(200, focus_page.page(CSS, JS, esc(TOKEN), version_html(),
                                                   f'<a class="bm" href="{esc(bookmarklet())}" '
-                                                  f'onclick="event.preventDefault()">📚 Add to bookshelf</a>'))
+                                                  f'onclick="event.preventDefault()">📚 Add to bookshelf</a>',
+                                                  port=PORT, favicon=FAVICON))
         if u.path == "/list":
             q = parse_qs(u.query)
             if "all" in q: SHOW_ALL = q["all"][0] == "1"
@@ -1231,33 +1241,39 @@ class H(BaseHTTPRequestHandler):
 def main():
     global SHOW_ALL, PORT
     ap = argparse.ArgumentParser()
-    ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--port", type=int, default=None, help="ignored unless inside 8760-8769 (the agreed block)")
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--no-browser", action="store_true")
+    ap.add_argument("--status", action="store_true", help="show which local projects are running, and where")
     a = ap.parse_args()
-    SHOW_ALL, PORT = a.all, a.port
+    if a.status:
+        print(localport.status())
+        return
+    SHOW_ALL = a.all
     global STARTED_HEAD
     STARTED_HEAD = pipeline.git("rev-parse", "HEAD")
-    srv = None
-    for port in range(a.port, a.port + 10):
-        try:
-            srv = ThreadingHTTPServer(("127.0.0.1", port), H)
-            break
-        except OSError:
-            print(f"Port {port} is busy (another review page may be open there) — trying {port + 1}…")
-    if srv is None:
-        sys.exit(f"Ports {a.port}–{a.port + 9} are all busy. Close other review pages' Terminal windows and try again.")
-    if port != a.port:
-        print(f"Using port {port}. If you use the 📚 bookmark, drag it to the bookmarks bar again from the ⋯ menu.")
-    PORT = port
-    url = f"http://127.0.0.1:{port}/"
-    print(f"review page: {url}   (Ctrl-C to stop)")
+    localport.ensure_registry()
+    localport.stop_older_copies()
+    if a.port and a.port != localport.DEFAULT:
+        if localport.BLOCK[0] <= a.port <= localport.BLOCK[1]:
+            print(f"Note: --port {a.port} is not needed any more; the page uses {localport.DEFAULT} and stops older copies.")
+        else:
+            print(f"Note: --port {a.port} is outside this project's ports "
+                  f"({localport.BLOCK[0]}–{localport.BLOCK[1]}), so it is ignored.")
+    srv, PORT = localport.bind(lambda port: ThreadingHTTPServer(("127.0.0.1", port), H))
+    if PORT != localport.DEFAULT:
+        print(f"Using port {PORT}. If you use the 📚 bookmark, drag it to the bookmarks bar again from the ⋯ menu.")
+    localport.record(PORT, pipeline.git("rev-parse", "--short", "HEAD"))
+    atexit.register(localport.forget)
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    url = f"http://127.0.0.1:{PORT}/"
+    print(f"virtual-bookshelf running at {url}   (Ctrl-C to stop)")
     if not a.no_browser:
         threading.Timer(0.5, webbrowser.open, [url]).start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
-        print("\nstopped. To apply, build, test and push in one go: python3 scripts/pipeline.py finish")
+        print("\nstopped.")
 
 
 if __name__ == "__main__":

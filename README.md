@@ -84,7 +84,7 @@ cd ~/Developer/virtual-bookshelf
 python3 scripts/review.py
 ```
 
-That opens the review page — the last Terminal command you need: when a new
+That opens the review page on port 8765 (this project's ports are 8760–8769; starting it again replaces the older copy, and `python3 scripts/review.py --status` shows which of your local projects are running where). It is the last Terminal command you need: when a new
 version is on GitHub the page shows a banner, and **Update & restart** brings
 it in and reloads. The page shows **one book at a time**: click the right
 option (or press 1–9), or **None of these** (N), **Not a book** (B), **Skip**
