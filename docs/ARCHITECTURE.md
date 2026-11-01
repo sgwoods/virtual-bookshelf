@@ -196,6 +196,9 @@ decisions and whether any data is not yet pushed, and buttons for the steps in
 | Save & push | `save` | apply, then commit the data files on a `review-YYYYMMDD-HHMM` branch (never `main`) and push it; the log links to the pull request |
 | Finish | `finish` | apply → build → test → push, stopping at the first failure, then preview |
 
+**What is running** is shown small beside the title: build number (commits in
+this version), short commit, its date, and when the page was last started.
+
 **New versions.** The page checks GitHub every few minutes and whenever its
 tab regains focus (`/version`). When `main` has commits this checkout lacks, a
 banner offers **Update & restart** (the Get latest step); when newer code is

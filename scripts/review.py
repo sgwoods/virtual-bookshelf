@@ -55,6 +55,7 @@ TOKEN = secrets.token_urlsafe(24)       # per run; required on every POST
 PORT = 8765
 JOB = {"action": "", "running": False, "ok": None, "log": [], "started": 0.0}
 RUN_ID = secrets.token_hex(4)           # changes on every restart; the page waits for a new one
+STARTED_AT = time.time()
 STARTED_HEAD = ""                       # the commit this process was started from
 VERSION = {"behind": 0, "checked": 0.0}
 VERSION_LOCK = threading.Lock()
@@ -85,6 +86,16 @@ def check_version(max_age: float = 300) -> dict:
     head = pipeline.git("rev-parse", "HEAD")
     return {"behind": VERSION["behind"], "restart_needed": bool(STARTED_HEAD and head and head != STARTED_HEAD),
             "run": RUN_ID}
+
+
+def build_label() -> dict:
+    """What is running: build number (commits on this branch), short commit, its date,
+    and when this process started — shown small at the top of the page."""
+    count = pipeline.git("rev-list", "--count", "HEAD")
+    sha = pipeline.git("rev-parse", "--short", "HEAD")
+    when = pipeline.git("log", "-1", "--format=%cd", "--date=format-local:%b %-d %H:%M")
+    return {"build": count, "commit": sha, "date": when,
+            "started": time.strftime("%b %-d %H:%M", time.localtime(STARTED_AT))}
 
 
 def restart_args(argv: list[str]) -> list[str]:
@@ -261,6 +272,7 @@ align-items:center;justify-content:center;gap:10px;padding:16px}.crop.open{displ
 .crop .sel{position:absolute;border:2px solid #ffcf6e;box-shadow:0 0 0 9999px rgba(0,0,0,.55);display:none;pointer-events:none}
 .crop .cbar{display:flex;gap:8px;align-items:center;color:#eee;font-size:13px;flex-wrap:wrap;justify-content:center}
 .crop .cbar b{font-weight:600}
+.ver{font-size:11px;color:var(--mute);opacity:.8;letter-spacing:.01em;white-space:nowrap}
 .newver{display:none;width:100%;background:var(--acc);color:var(--card);border-radius:8px;padding:8px 12px;
 font-size:14px;align-items:center;gap:12px}.newver.open{display:flex}.newver span{margin-right:auto}
 .newver button{background:var(--card);color:var(--acc);border-color:var(--card);font-weight:600}
@@ -845,6 +857,15 @@ def card(b, r, ov, drive, check=False):
 </section>"""
 
 
+def version_html() -> str:
+    v = build_label()
+    if not v["commit"]:
+        return ""
+    return (f'<span class="ver" title="Build = number of changes in this version; started = when this page was last '
+            f'(re)started">build {esc(v["build"])} · {esc(v["commit"])} · {esc(v["date"])} · '
+            f'started {esc(v["started"])}</span>')
+
+
 def tools_bar():
     s = pipeline.status()
     lk = s["lookup"]
@@ -893,7 +914,7 @@ def page():
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Bookshelf Review</title>
 <style>{CSS}</style></head><body data-token="{esc(TOKEN)}">
-<header><h1>Bookshelf review</h1><span class="count"><b id="left">{left}</b> of {len(every)} left</span>
+<header><h1>Bookshelf review</h1>{version_html()}<span class="count"><b id="left">{left}</b> of {len(every)} left</span>
 <div class="bar"><i style="width:{pct:.0f}%"></i></div>
 <a href="/?all={'0' if SHOW_ALL else '1'}">{'queue only' if SHOW_ALL else 'show all books'}</a>
 {tools_bar()}<div id="newver" class="newver"></div></header>

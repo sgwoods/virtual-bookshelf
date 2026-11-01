@@ -210,3 +210,14 @@ class SideWindow(unittest.TestCase):
     def test_google_link_opens_a_side_window(self):
         self.assertIn("openGoogle", review.JS)
         self.assertIn("'vbgoogle'", review.JS)
+
+
+class VersionLabel(unittest.TestCase):
+    def test_label_names_build_commit_and_start_time(self):
+        v = review.build_label()
+        self.assertEqual(set(v), {"build", "commit", "date", "started"})
+        if v["commit"]:
+            html = review.version_html()
+            self.assertIn("build " + v["build"], html)
+            self.assertIn(v["commit"], html)
+            self.assertIn("started", html)
