@@ -1,9 +1,12 @@
 """The one-book-at-a-time review page (served at / by scripts/review.py).
 
 One book on screen. Left: what is on your shelf (the spine, the shelf photo,
-the title and author as read — click to correct). Right: the options, as large
-tiles with cover and details, already looked up; your own images (sent with the
-bookmark or saved to Downloads) appear above them, auto-cropped and selected.
+the title and author as read — click to correct). Middle: the options, as large
+tiles with cover and details, already looked up; your own images appear above
+them, auto-cropped and selected. Right: pictures of the book from the web
+(scripts/image_search.py), already searched — one click brings the full image
+in as one of your images, no tab switching. An image copied anywhere (e.g. from
+Google Images: right-click → Copy Image) can be pasted with ⌘V.
 One click on a tile — or None of these / Not a book / Skip — decides; the
 decision is applied at once, the book leaves the queue and the next one
 appears, with Undo. Publish sends everything that is ready.
@@ -15,7 +18,7 @@ spine view, side window, version banner, actions log).
 """
 
 CSS = r"""
-.fx{max-width:1240px;margin:0 auto;padding:18px 20px 120px}
+.fx{max-width:1560px;margin:0 auto;padding:18px 20px 120px}
 .fhead{position:sticky;top:0;z-index:4;background:var(--bg);border-bottom:1px solid var(--line);
   padding:12px 20px;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
 .fhead h1{font:600 19px/1 Georgia,serif;margin:0}
@@ -32,8 +35,23 @@ CSS = r"""
   font-size:14px;color:var(--ink);text-decoration:none;cursor:pointer}
 .menu button:hover,.menu a.mi:hover{background:var(--chip)}
 .menu hr{border:0;border-top:1px solid var(--line);margin:4px 0}.menu .bmrow{padding:6px 10px;font-size:12px;color:var(--mute)}
-.book{display:grid;grid-template-columns:300px 1fr;gap:28px;align-items:start}
+.book{display:grid;grid-template-columns:260px minmax(0,1fr) 340px;gap:24px;align-items:start}
+@media (max-width:1180px){.book{grid-template-columns:260px minmax(0,1fr)}.web{grid-column:1/-1;position:static;max-height:none}}
 @media (max-width:860px){.book{grid-template-columns:1fr}}
+.web{position:sticky;top:70px;max-height:calc(100vh - 90px);overflow:auto;border-left:1px solid var(--line);padding-left:18px}
+.webq{display:flex;gap:6px;margin-bottom:6px}.webq input{flex:1;min-width:0;font:inherit;font-size:13px;padding:6px 9px;
+  border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink)}
+.webgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:8px}
+.webimg{position:relative;padding:0;border:2px solid transparent;border-radius:6px;background:var(--chip);cursor:pointer;
+  display:flex;flex-direction:column;overflow:hidden}
+.webimg:hover{border-color:var(--acc)}
+.webimg img{width:100%;height:130px;object-fit:contain;display:block;background:var(--chip)}
+.webimg span{font-size:10px;color:var(--mute);padding:2px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.webimg.busy{opacity:.5;cursor:progress}.webimg.used{border-color:var(--ok)}
+.webimg.used::after{content:'✓ added';position:absolute;top:4px;right:4px;background:var(--ok);color:var(--card);
+  font-size:10px;padding:1px 5px;border-radius:4px}
+.webimg.failed{opacity:.35}
+.webhint{font-size:12px;color:var(--mute);margin:10px 0 0}
 .lab{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);margin:0 0 8px}
 .shelfside .spinebox{height:340px;display:flex;align-items:center;justify-content:center;background:var(--chip);
   border-radius:8px;overflow:hidden;cursor:zoom-in;margin-bottom:10px;position:relative}
@@ -187,19 +205,17 @@ function render(d){
   out.append(none, nab, sk); right.append(out);
 
   const find = el('div', {class: 'findrow'});
-  const g = el('a', {href: d.google_url, target: '_blank', rel: 'noopener'}, 'Google Images ↗');
-  g.onclick = () => { F.linkAt = Date.now()/1000 - 5; return openGoogle(g) };
-  const q = el('input', {placeholder: 'ISBN or other words to search'});
+    const q = el('input', {placeholder: 'ISBN or other words to search'});
   const go = el('button', null, 'Search');
   const doSearch = () => { const v = q.value.trim(); if(!v) return;
     const isbn = /^[0-9xX\- ]{10,17}$/.test(v) ? v : ''; lookFurther(isbn ? '' : v, isbn) };
   go.onclick = doSearch; q.onkeydown = e => { if(e.key === 'Enter') doSearch() };
   const dl = el('a', {href: '#'}, 'Check Downloads');
   dl.onclick = e => { e.preventDefault(); showMine(0, false) };
-  find.append('Find more:', g, q, go, '·', dl);
+  find.append('Find more:', q, go, '·', dl);
   right.append(find);
 
-  wrap.append(left, right); fx.append(wrap);
+  wrap.append(left, right, webPanel(d)); fx.append(wrap);
   for(const img of d.own || []) addMine({own: true, url: img.url, kind: img.kind, source: img.source});
   if(d.auto_find && !F.searched[b.row_id]) lookFurther('', '', true);
   window.scrollTo(0, 0);
@@ -259,6 +275,59 @@ async function lookFurther(q, isbn, gentle){
   F.status.textContent = fresh.length ? fresh.length + ' more found.' : (isbn || q) ? 'Nothing new found.' : '';
 }
 
+/* ---- pictures from the web, beside the options ---- */
+function webPanel(d){
+  const box = el('section', {class: 'web'});
+  box.append(el('p', {class: 'lab'}, 'Pictures on the web — click one to use it'));
+  const qrow = el('div', {class: 'webq'});
+  const qi = el('input', {placeholder: 'search words'}); qi.value = d.image_q || '';
+  const go = el('button', {type: 'button'}, 'Search');
+  qrow.append(qi, go);
+  const note = el('p', {class: 'searching'});
+  const grid = el('div', {class: 'webgrid'});
+  const g = el('a', {href: d.google_url, target: '_blank', rel: 'noopener'}, 'Google Images ↗');
+  g.onclick = () => { F.linkAt = Date.now()/1000 - 5; return openGoogle(g) };
+  const hint = el('p', {class: 'webhint'});
+  hint.append('Not here? Try ', g, ' — right-click a picture, Copy Image, then press ⌘V on this page.');
+  box.append(qrow, note, grid, hint);
+  const load = async q => {
+    note.textContent = 'Looking for pictures…'; grid.replaceChildren();
+    let r;
+    try { r = await call('/api/images', {q}) } catch(e) { note.textContent = 'Could not search: ' + e.message; return }
+    if(F.cur !== d) return;
+    if(!r.results.length){ note.textContent = 'No pictures found' + (r.error ? ' (' + r.error + ')' : '') + '.'; return }
+    note.textContent = r.results.length + ' pictures (' + r.source + ').';
+    for(const x of r.results){
+      const b = el('button', {class: 'webimg', type: 'button', title: (x.title ? x.title + ' — ' : '') + x.host});
+      const im = el('img', {src: x.thumb, loading: 'lazy', alt: '', referrerpolicy: 'no-referrer'});
+      im.onerror = () => b.remove();
+      b.append(im, el('span', null, x.host)); b.onclick = () => useWeb(x, b); grid.append(b);
+    }
+  };
+  go.onclick = () => load(qi.value); qi.onkeydown = e => { if(e.key === 'Enter') load(qi.value) };
+  load(qi.value);
+  return box;
+}
+async function useWeb(x, b){
+  if(b.classList.contains('busy') || b.classList.contains('used')) return;
+  b.classList.add('busy'); b.classList.remove('failed');
+  try {
+    const r = await call('/api/grab', {image: x.image, page: x.page, thumb: x.thumb});
+    b.classList.remove('busy'); b.classList.add('used');
+    addMine({name: r.name, source: r.source}); F.mineBox.scrollIntoView({block: 'nearest', behavior: 'smooth'});
+  } catch(e) { b.classList.remove('busy'); b.classList.add('failed'); b.title = 'Could not fetch it: ' + e.message }
+}
+/* an image copied anywhere (e.g. Google Images: right-click → Copy Image) — paste it here */
+document.addEventListener('paste', async e => {
+  if(!F.cur || (e.target.closest && e.target.closest('input,textarea'))) return;
+  const it = [...((e.clipboardData && e.clipboardData.items) || [])].find(i => i.type.startsWith('image/'));
+  if(!it) return;
+  e.preventDefault();
+  const url = await new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(it.getAsFile()) });
+  try { const r = await call('/api/paste', {data: url}); addMine({name: r.name, source: 'pasted'}) }
+  catch(err) { alert('Could not use the pasted image: ' + err.message) }
+});
+
 /* ---- your own images: from the bookmark or Downloads, auto-cropped, used on decide ---- */
 async function showMine(since, quiet){
   if(!F.cur) return;
@@ -272,6 +341,7 @@ function addMine(m){
     box.replaceChildren(el('p', {class: 'lab'}, 'Your images — used for this book when you choose'), el('div', {class: 'items'}));
     box.classList.add('open') }
   const items = box.querySelector('.items');
+  if(!m.own) F.mine.forEach(o => { if(!o.own && o.use) o.use.checked = false });   /* the newest one is used */
   const fig = el('figure'); items.append(fig); F.mine.push(m); m.fig = fig;
   const im = el('img', {alt: ''});
   const use = el('input', {type: 'checkbox'}); use.checked = true; m.use = use;

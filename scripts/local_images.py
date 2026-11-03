@@ -167,6 +167,25 @@ def grab(image_url: str, page_url: str = "") -> str:
     return name
 
 
+def save_pasted(data_url: str) -> str:
+    """Save an image pasted on the review page (a data: URL) in Downloads.
+    Returns the new file's name."""
+    head, _, body = (data_url or "").partition(",")
+    ctype = head[5:].split(";")[0] if head.startswith("data:") and head.endswith(";base64") else ""
+    ext = {v: k for k, v in TYPES.items() if k != ".jpeg"}.get(ctype)
+    if not ext:
+        raise ValueError("not a picture")
+    import base64
+    data = base64.b64decode(body)
+    if len(data) > MAX_GRAB:
+        raise ValueError("image too large")
+    d = downloads_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    name = f"bookshelf-paste-{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}{ext}"
+    (d / name).write_bytes(data)
+    return name
+
+
 def _jpeg(data: bytes) -> bytes:
     if not data.startswith(b"\xff\xd8"):
         raise ValueError("cropped image must be a JPEG")
@@ -274,9 +293,11 @@ def _web_copy(src: Path, dest: Path, longest: int) -> Path:
     """A web-sized JPEG of src at dest (macOS sips); a plain copy elsewhere."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     if shutil.which("sips"):
-        subprocess.run(["sips", "-s", "format", "jpeg", "-s", "formatOptions", "82", "-Z", str(longest),
-                        str(src), "--out", str(dest)], check=True, capture_output=True)
-        return dest
+        r = subprocess.run(["sips", "-s", "format", "jpeg", "-s", "formatOptions", "82", "-Z", str(longest),
+                            str(src), "--out", str(dest)], capture_output=True)
+        if r.returncode == 0 and dest.exists():
+            return dest
+        # sips could not read it (an unusual format): publish it as it is rather than fail
     dest = dest.with_suffix(src.suffix.lower())
     shutil.copyfile(src, dest)
     return dest

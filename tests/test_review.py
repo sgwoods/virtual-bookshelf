@@ -150,7 +150,8 @@ class Guard(unittest.TestCase):
         self.assertIn("unknown", body)
 
     def test_one_book_routes_need_the_token(self):
-        for path in ("/api/next", "/api/book", "/api/decide", "/api/undo", "/api/skip", "/api/warm"):
+        for path in ("/api/next", "/api/book", "/api/decide", "/api/undo", "/api/skip", "/api/warm",
+                     "/api/images", "/api/grab", "/api/paste"):
             with self.subTest(path):
                 code, _ = self.request("POST", path, {"row_id": "x", "decision": "not-a-book"})
                 self.assertEqual(code, 403)

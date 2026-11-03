@@ -39,6 +39,7 @@ from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import focus_page                                  # noqa: E402
+import image_search                                # noqa: E402
 import localport                                   # noqa: E402
 import local_images                                # noqa: E402
 import pipeline                                    # noqa: E402
@@ -984,9 +985,17 @@ def focus_book(row_id: str, counts: dict | None = None, after: list | None = Non
     order = [x for x in st["order"] if x != row_id]
     return {"counts": {k: st[k] for k in ("to_review", "ready", "published", "total")},
             "book": b, "spine": spine, "shelf_html": shelf_photo(row, drive),
-            "google_url": image_search_url(row), "own": own,
+            "google_url": image_search_url(row), "own": own, "image_q": image_query(row),
             "auto_find": b["status"] in ("weak", "none") and not b["unreadable"],
             "next": order[0] if order else ""}
+
+
+def image_query(b) -> str:
+    """What to search the web's pictures for: the title as read and the first author."""
+    t = b["title"]
+    if t.lower().startswith("unknown"):
+        return ""
+    return f"{clean_title(t)} {resolve.first_author(b['author'])} book".strip()
 
 
 def focus_next() -> dict:
@@ -1008,7 +1017,10 @@ def warm(row_id: str) -> None:
         try:
             b = next(x for x in csv.DictReader(open(BOOKS, encoding="utf-8")) if rid(x) == row_id)
             r = next((x for x in csv.DictReader(open(RESOLVED, encoding="utf-8")) if x["row_id"] == row_id), {})
-            if r.get("status") in ("weak", "none") and not b["title"].lower().startswith("unknown"):
+            if b["title"].lower().startswith("unknown"):
+                return
+            image_search.search(image_query(b))
+            if r.get("status") in ("weak", "none"):
                 resolve.search_more(b, gentle=True)
         except Exception:
             pass
@@ -1222,6 +1234,21 @@ class H(BaseHTTPRequestHandler):
             if self.path == "/api/skip":
                 review_queue.skip(str(data["row_id"]))
                 return self.send(200, "ok", "text/plain")
+            if self.path == "/api/images":
+                return self.send(200, json.dumps(image_search.search(str(data.get("q", "")))), "application/json")
+            if self.path == "/api/grab":
+                page_url = str(data.get("page") or "")
+                try:
+                    name = local_images.grab(str(data.get("image", "")), page_url)
+                except Exception:
+                    if not data.get("thumb"):
+                        raise
+                    name = local_images.grab(str(data["thumb"]), page_url)    # the site refused: use the preview
+                return self.send(200, json.dumps({"name": name, "source": local_images.host(page_url or data.get("image", ""))}),
+                                 "application/json")
+            if self.path == "/api/paste":
+                return self.send(200, json.dumps({"name": local_images.save_pasted(str(data.get("data", "")))}),
+                                 "application/json")
             if self.path == "/api/warm":
                 warm(str(data["row_id"]))
                 return self.send(200, "ok", "text/plain")
