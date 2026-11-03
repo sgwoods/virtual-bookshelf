@@ -129,6 +129,17 @@ advance), and a toast offers **Undo** (U). **Publish** runs `publish_main`.
 Less frequent actions are in the **⋯** menu; the older list of cards is at
 `/list`.
 
+**Pictures on the web, beside the options** (`scripts/image_search.py`). A
+third column shows pictures of the book found on the web — Bing Images, else
+DuckDuckGo Images; results cached in `data/cache/images/` and searched in
+advance for the next book — with a box to change the search words. One click
+fetches the full picture (or, if its site refuses, the preview) into Downloads
+with its source and adds it to your images for this book, auto-cropped and
+ticked (the newest one is used). Google Images cannot be shown inside the page
+(it refuses to be framed and offers no results to programs), so it stays a
+link; a picture copied anywhere (right-click → Copy Image) can be **pasted
+with ⌘V** onto the page instead of saved and dragged.
+
 **List view** (`/list`).
 
 **Cards.** First, every row whose spine read is below high confidence or whose
@@ -299,6 +310,7 @@ Standard library `unittest`, no network:
   must not (*Dune* / *Dune Messiah*, same title by another author).
 - `tests/test_site.py` — every catalogued book is on the page, the data is
   embedded and well-formed, and no external scripts or stylesheets are loaded.
+- `tests/test_image_search.py` — reading Bing's and DuckDuckGo's results, fallback and cache, pasted pictures.
 - `tests/test_localport.py` — the port block, replacing only its own older copy (with real processes), the shared registry.
 - `tests/test_review_queue.py` — the queue's states, decide-and-apply, undo and skip.
 - `tests/test_review.py` — the quick-check rule, that the page script parses,

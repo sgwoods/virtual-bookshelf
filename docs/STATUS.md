@@ -3,7 +3,17 @@
 This is the dated log of work and results. What exists and how it works is in
 [ARCHITECTURE.md](ARCHITECTURE.md); what comes next is in [ROADMAP.md](ROADMAP.md).
 
-## Latest (Nov 1)
+## Latest (Nov 3)
+
+- **Web pictures without leaving the page.** The review page has a third
+  column of pictures of the book from the web (Bing, else DuckDuckGo), already
+  searched; one click adds the full picture to the book, auto-cropped. Any
+  copied picture can be pasted with ⌘V. No more tab switching or bookmark.
+- **Fix:** publishing from the Mac failed in the tests because macOS `sips`
+  rejected a test image; publishing now copies an image sips cannot read
+  instead of failing. 104 tests.
+
+## Nov 1
 
 - **Shared localhost agreement.** Each local project owns ten ports
   (bookshelf 8760–8769, news 8770–8779, aurora 8780–8789, Star Swarm

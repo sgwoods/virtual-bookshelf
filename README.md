@@ -89,7 +89,7 @@ version is on GitHub the page shows a banner, and **Update & restart** brings
 it in and reloads. The page shows **one book at a time**: click the right
 option (or press 1–9), or **None of these** (N), **Not a book** (B), **Skip**
 (S); the decision is applied at once and the next book appears, with **Undo**
-(U). Then press **Publish**: it runs the tests and pushes the data to GitHub,
+(U). Pictures of the book from the web are shown beside the options — click one to use it as the cover (or paste any copied picture with ⌘V). Then press **Publish**: it runs the tests and pushes the data to GitHub,
 and the public site updates a few minutes later. Everything else (get latest,
 import shelf photos, retry lookups, rebuild & preview, run tests, the older
 list view) is in the **⋯** menu.

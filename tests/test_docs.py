@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DOC = ROOT / "docs/ARCHITECTURE.md"
 TOP = ("data/", "docs/", "scripts/", "site/", "tests/", ".github/")
 GENERATED = {"data/overrides.csv", "data/resolved.csv", "data/reading.csv", "data/cache/", "_site/", "photos/",
-             "images/", "data/images.csv"}  # created locally, on first use, or git-ignored
+             "images/", "data/images.csv", "data/cache/images/"}  # created locally, on first use, or git-ignored
 
 
 class Architecture(unittest.TestCase):

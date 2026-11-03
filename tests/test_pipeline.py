@@ -78,6 +78,17 @@ class Publish(unittest.TestCase):
         changed = sorted(sh(self.work, "git", "show", "--name-only", "--format=", "HEAD").split())
         self.assertEqual(changed, ["data/images.csv", "site_images/IMG_1__shelf__1/cover.jpg"])
 
+    def test_publish_still_works_when_sips_cannot_read_an_image(self):
+        # On a Mac, sips refuses files it cannot read; publishing copies them as they are instead of failing.
+        import os
+        fake = self.tmp / "bin"
+        fake.mkdir()
+        (fake / "sips").write_text("#!/bin/sh\nexit 13\n")
+        (fake / "sips").chmod(0o755)
+        os.environ["PATH"] = f"{fake}{os.pathsep}{os.environ['PATH']}"
+        self.addCleanup(os.environ.__setitem__, "PATH", os.environ["PATH"].split(os.pathsep, 1)[1])
+        self.test_publish_includes_published_images_not_originals()
+
     def advance_origin(self, name="new.txt"):
         """Someone (me, via a merged PR) pushes a new commit to GitHub's main."""
         other = self.tmp / "other"
