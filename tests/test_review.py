@@ -164,8 +164,8 @@ class Guard(unittest.TestCase):
     def test_main_page_is_one_book_at_a_time_and_list_is_kept(self):
         code, body = self.request("GET", "/")
         self.assertEqual(code, 200)
-        self.assertIn('id="pubbtn"', body)
-        self.assertIn("nextBook(", body)
+        self.assertIn('id="savebar"', body)
+        self.assertIn("openBucket(", body)
 
     def test_publish_is_an_action(self):
         self.assertEqual(review.ACTIONS["publish"][1], "publish_main")

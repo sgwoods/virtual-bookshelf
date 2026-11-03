@@ -108,28 +108,45 @@ to the shared `~/.config/local-ports.tsv`, warning if blocks overlap.
 favicon and header label name the project and port; `python3 scripts/review.py
 --status` lists which registered projects are running, where.
 
-**One book at a time** (`/`, drawn by `scripts/focus_page.py`, queue in
-`scripts/review_queue.py`). Every book is in exactly one state: **to review**
-(needs a person and has no decision), **ready to publish** (decided here, not
-yet on GitHub — compared against `git show HEAD:data/overrides.csv`) or
-**published**. The header shows the three counts, a progress bar and
-**Publish N**. One book fills the page: on the left what is on the shelf — the
-spine cropped from its shelf photo (when `data/spines.csv` outlines it), the
-title and author as read with **✎ correct**, why it needs a person in plain
-words, and the shelf photo; on the right the options as large numbered tiles
-(cover, title, author, publisher, year, ISBN; the current match first and
-marked), already looked further for weak and missing matches, with **edit** on
-each tile for corrected details. Your images — from the 📚 bookmark or
-Downloads — appear above the tiles auto-cropped and selected, and are saved
-with whatever you choose. One click (or key) decides: a tile (1–9), **None of
-these — keep as read** (N), **Not a book** (B) or **Skip for now** (S, to the
-back of the queue). The decision is written to `data/overrides.csv` and
-applied to `data/resolved.csv` at once, the next book appears (looked up in
-advance), and a toast offers **Undo** (U). **Publish** runs `publish_main`.
-Less frequent actions are in the **⋯** menu; the older list of cards is at
-`/list`.
+**The book editor** (`/`, drawn by `scripts/focus_page.py`, queue in
+`scripts/review_queue.py`) — a content-editing workflow for the first pass and
+for every book added later. Every book is in one state: **to review** (needs
+a person and has no decision), **check in hand** (set aside to look at the
+book itself), **waiting to publish** (decided here, not yet on GitHub —
+compared against `git show HEAD:data/overrides.csv`) or **published**. The
+header shows these as buttons that switch the **queue rail** on the left; the
+rail also searches every book, so any book can be reopened and changed.
 
-**Pictures on the web, beside the options** (`scripts/image_search.py`). A
+One book fills the middle. At the top, what is on the shelf: the spine cropped
+from its shelf photo (outlined in `data/spines.csv`), the title and author as
+read, why it needs a person, and the shelf photo. Then three steps, each
+starting on the best guess:
+
+1. **Details.** The matches (Open Library, Google Books; more are looked for
+   automatically, or by ISBN or other words) and "as read from the spine". The
+   chosen one fills title, author, year, publisher and ISBN, each marked with
+   where it came from (Open Library, Google Books, Spine, You); any field can be
+   edited for your copy's edition. A publisher named in the spine notes is
+   offered with one click.
+2. **Cover.** The match's cover, your pictures, or none (the site shows the
+   title).
+3. **Spine.** The crop from your shelf photo, your pictures, or none. Shelf
+   crops are saved as images (books lying flat turned upright) and start
+   **unpublished**, since the shelf photos are private.
+
+The **save bar** at the bottom shows what will be saved, with **Save & next**
+(Enter), **Skip** (S), **Check in hand** (H) and **Not a book** (B); 1–9 and 0
+choose a match or the spine read, ← goes back, U undoes, / searches. Save
+attaches the chosen pictures, records the decision in `data/overrides.csv`
+(details, their sources and the cover choice in `pick_json`) and applies it to
+`data/resolved.csv` at once. **Publishing happens in the background**: after
+five saved books, or 90 seconds after the last save, the page runs
+`publish_main` (tests, then data only to `main`); the header shows how many
+are waiting and when the last publish was, with **Publish now**. Saving waits
+while git is committing. Automatic publishing can be switched off in the ⋯
+menu.
+
+**Pictures on the web, in the right-hand column** (`scripts/image_search.py`). A
 third column shows pictures of the book found on the web — Bing Images, else
 DuckDuckGo Images; results cached in `data/cache/images/` and searched in
 advance for the next book — with a box to change the search words. One click

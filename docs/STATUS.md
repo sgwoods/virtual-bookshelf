@@ -5,6 +5,16 @@ This is the dated log of work and results. What exists and how it works is in
 
 ## Latest (Nov 3)
 
+- **Book editor.** The review page is now an editor for one book at a time:
+  a queue rail (To review · Check in hand · Waiting to publish · All books,
+  with search to reopen any book), the spine from your shelf photo, and three
+  steps — details (each field shows where it came from; edit for your
+  edition), cover, spine — with a save bar. Most books take one key (Enter).
+  Saved books publish in the background.
+- **All 521 spines outlined** on their shelf photos (`data/spines.csv`), so
+  each book shows its own spine and can save it as an image. Leaning books get
+  a rectangle that takes in a sliver of their neighbours.
+
 - **Web pictures without leaving the page.** The review page has a third
   column of pictures of the book from the web (Bing, else DuckDuckGo), already
   searched; one click adds the full picture to the book, auto-cropped. Any
