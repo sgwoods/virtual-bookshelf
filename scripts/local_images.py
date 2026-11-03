@@ -226,6 +226,24 @@ def attach(row_id: str, name: str, kind: str, cropped: bytes | None = None) -> s
     return str(final.relative_to(ROOT))
 
 
+def attach_bytes(row_id: str, kind: str, jpeg: bytes, label: str, published: bool = False) -> str:
+    """Save an image made in the browser (e.g. the spine cropped from your shelf
+    photo) as this book's <kind>. Shelf-photo crops start unpublished: the shelf
+    photos themselves stay private until you switch a crop on."""
+    if kind not in KINDS:
+        raise ValueError("kind must be cover or spine")
+    d = folder(row_id)
+    d.mkdir(parents=True, exist_ok=True)
+    for old in d.glob(f"{kind}.*"):
+        old.unlink()
+    (d / f"{kind}.jpg").write_bytes(_jpeg(jpeg))
+    meta = read_meta(row_id)
+    meta[kind] = {"image_url": "", "page_url": "", "label": label, "published": bool(published),
+                  "added": time.strftime("%Y-%m-%d %H:%M")}
+    write_meta(row_id, meta)
+    return str((d / f"{kind}.jpg").relative_to(ROOT))
+
+
 def recrop(row_id: str, kind: str, cropped: bytes) -> str:
     """Replace <kind> with a new crop (made in the browser from the kept original)."""
     if kind not in KINDS:
@@ -281,7 +299,7 @@ def describe(row_id: str, kind: str) -> dict:
     """What the review page shows for one of your images."""
     m = read_meta(row_id).get(kind, {})
     page = m.get("page_url") or m.get("image_url") or ""
-    return {"source": host(page), "source_url": page, "published": m.get("published", True)}
+    return {"source": host(page) or m.get("label", ""), "source_url": page, "published": m.get("published", True)}
 
 
 # ---------------------------------------------------------------- publishing

@@ -295,7 +295,7 @@ def fold_decisions(log: Log) -> None:
         log(f"Applied {sum(a != b for a, b in zip(out, rows))} decision(s) to data/resolved.csv.")
 
 
-def publish_main(log: Log) -> bool:
+def publish_main(log: Log, lock=None) -> bool:
     """Publish the review: images → tests → commit data on main → pull → push."""
     import local_images
     br = branch()
@@ -319,6 +319,12 @@ def publish_main(log: Log) -> bool:
                f"to review {lk.get('weak', 0) + lk.get('none', 0)}")
     files = [f for f in DATA_FILES if (ROOT / f).exists() or git("ls-files", "--", f)]
     log("\n== publish")
+    import contextlib
+    with lock or contextlib.nullcontext():        # the review page holds off saving while git works
+        return _commit_and_push(log, files, message)
+
+
+def _commit_and_push(log: Log, files: list, message: str) -> bool:
     if not (run(["git", "add", "-A", "--", *files], log)
             and run(["git", "commit", "-m", message, "--", *files], log)):
         return False

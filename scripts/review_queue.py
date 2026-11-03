@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """The review queue behind the one-book-at-a-time page.
 
-Every catalogued book is in exactly one of three states:
+Every catalogued book is in exactly one of four states:
 
     to review          needs a person (weak/none lookup, unsure spine read,
                        or a match that dropped the spine's subtitle) and has
                        no decision yet
+    check in hand      set aside to look at the book itself (decision "in-hand")
     ready to publish   decided on this Mac, not yet pushed to GitHub
     published          its decision is in GitHub's copy (or it never needed one)
 
@@ -86,9 +87,42 @@ def state() -> dict:
     todo = [rid(b) for b in books if rid(b) not in ov and why(b, res.get(rid(b)))]
     later = [x for x in SKIPPED if x in todo]
     order = [x for x in todo if x not in later] + later
-    ready = [k for k, o in ov.items() if head.get(k) != o["decision"] + "|" + o.get("pick_json", "")]
-    return {"order": order, "to_review": len(order), "ready": len(ready),
-            "published": len(books) - len(order) - len(ready), "total": len(books)}
+    in_hand = [rid(b) for b in books if ov.get(rid(b), {}).get("decision") == "in-hand"]
+    ready = [k for k, o in ov.items() if o["decision"] != "in-hand"
+             and head.get(k) != o["decision"] + "|" + o.get("pick_json", "")]
+    return {"order": order, "in_hand_ids": in_hand, "ready_ids": ready,
+            "to_review": len(order), "in_hand": len(in_hand), "ready": len(ready),
+            "published": len(books) - len(order) - len(ready) - len(in_hand), "total": len(books)}
+
+
+def listing(bucket: str = "to_review", q: str = "", limit: int = 400) -> list[dict]:
+    """Books for the queue rail: one bucket, or a search over every book."""
+    books = [b for b in read_csv(BOOKS) if b["position"] != "0"]
+    res = {r["row_id"]: r for r in read_csv(RESOLVED)}
+    st = state()
+    if q.strip():
+        words = norm(q).split()
+        pick = [b for b in books if all(w in norm(b["title"] + " " + b["author"] + " " +
+                                                  (res.get(rid(b)) or {}).get("match_title", "")) for w in words)]
+        ids = [rid(b) for b in pick]
+    elif bucket == "in_hand":
+        ids = st["in_hand_ids"]
+    elif bucket == "ready":
+        ids = st["ready_ids"]
+    elif bucket == "all":
+        ids = [rid(b) for b in books]
+    else:
+        ids = st["order"]
+    by = {rid(b): b for b in books}
+    where = {**{k: "to review" for k in st["order"]}, **{k: "check in hand" for k in st["in_hand_ids"]},
+             **{k: "ready to publish" for k in st["ready_ids"]}}
+    out = []
+    for k in ids[:limit]:
+        b, r = by.get(k), res.get(k) or {}
+        if b:
+            out.append({"row_id": k, "title": r.get("match_title") or b["title"], "author": b["author"],
+                        "state": where.get(k, "published"), "cover_url": r.get("cover_url", "")})
+    return out
 
 
 def book(row_id: str) -> dict:
@@ -104,7 +138,17 @@ def book(row_id: str) -> dict:
         want = r.get("work_id") or r.get("gb_id") or r.get("match_title")
         cands.sort(key=lambda c: key(c) != want)
         current = bool(cands) and key(cands[0]) == want
+    ov = next((x for x in read_csv(OVERRIDES) if x["row_id"] == row_id), None)
+    decided = None
+    if ov:
+        try:
+            decided = {"decision": ov["decision"], "pick": json.loads(ov.get("pick_json") or "{}")}
+        except ValueError:
+            decided = {"decision": ov["decision"], "pick": {}}
     return {"row_id": row_id, "title": b["title"], "author": b["author"], "notes": b.get("notes", ""),
+            "decided": decided, "confidence": b.get("confidence", ""),
+            "resolved": {k: r.get(k, "") for k in ("status", "match_title", "match_author", "year", "isbns",
+                                                    "cover_url", "source")},
             "photo": b["photo"], "stack": b["stack"], "position": b["position"],
             "why": why(b, r), "status": r.get("status", ""), "current": current,
             "unreadable": b["title"].lower().startswith("unknown"),
@@ -113,7 +157,7 @@ def book(row_id: str) -> dict:
 
 def decide(row_id: str, decision: str, pick_json: str = "") -> None:
     """Record a decision and apply it to data/resolved.csv straight away."""
-    if decision not in ("pick", "accept", "no-match", "not-a-book"):
+    if decision not in ("pick", "accept", "no-match", "not-a-book", "in-hand"):
         raise ValueError("bad decision")
     with LOCK:
         rows = {x["row_id"]: x for x in read_csv(OVERRIDES)}

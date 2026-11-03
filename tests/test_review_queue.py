@@ -110,6 +110,20 @@ class Queue(unittest.TestCase):
         self.assertEqual(q.state()["order"][0], "IMG_1:shelf:1")
         self.assertEqual(q.read_csv(q.OVERRIDES), [])
 
+    def test_check_in_hand_is_its_own_list(self):
+        q.decide("IMG_1:shelf:4", "in-hand")
+        s = q.state()
+        self.assertNotIn("IMG_1:shelf:4", s["order"])
+        self.assertEqual((s["in_hand"], s["ready"], s["to_review"]), (1, 0, 3))
+        self.assertEqual(self.status("IMG_1:shelf:4"), "skipped", "nothing is applied")
+        self.assertEqual([x["row_id"] for x in q.listing("in_hand")], ["IMG_1:shelf:4"])
+
+    def test_listing_and_search(self):
+        self.assertEqual(len(q.listing("to_review")), 4)
+        self.assertEqual(len(q.listing("all")), 5)
+        found = q.listing("to_review", "gladwell outliers")
+        self.assertEqual([(x["row_id"], x["state"]) for x in found], [("IMG_1:shelf:2", "published")])
+
     def test_skip_goes_to_the_back(self):
         q.skip("IMG_1:shelf:1")
         self.assertEqual(q.state()["order"][-1], "IMG_1:shelf:1")

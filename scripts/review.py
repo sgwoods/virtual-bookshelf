@@ -77,7 +77,7 @@ ACTIONS = {           # button → (label, pipeline step, reload cards afterward
     "test":    ("Run tests",         "test",    False),
     "save":    ("Save & push",       "save",    True),
     "finish":  ("Finish",            "finish",  True),
-    "publish": ("Publish",           "publish_main", True),
+    "publish": ("Publish",           "publish_main", False),
 }
 
 
@@ -979,11 +979,12 @@ def focus_book(row_id: str, counts: dict | None = None, after: list | None = Non
     spine = None
     if box and urls:
         where = f"{b['stack']} stack, #{b['position']}" if b["stack"] not in ("shelf", "") else f"#{b['position']}"
-        spine = {"small": urls[0], "big": urls[1], "box": box, "cap": f"{b['photo']} — {where}"}
+        spine = {"small": urls[0], "big": urls[1], "box": box, "cap": f"{b['photo']} — {where}",
+                 "local": urls[0].startswith("/")}
     own = [{"kind": k, "url": "/" + rel, **local_images.describe(row_id, k)}
            for k, rel in local_images.images_for(row_id).items()]
     order = [x for x in st["order"] if x != row_id]
-    return {"counts": {k: st[k] for k in ("to_review", "ready", "published", "total")},
+    return {"counts": {k: st[k] for k in ("to_review", "in_hand", "ready", "published", "total")},
             "book": b, "spine": spine, "shelf_html": shelf_photo(row, drive),
             "google_url": image_search_url(row), "own": own, "image_q": image_query(row),
             "auto_find": b["status"] in ("weak", "none") and not b["unreadable"],
@@ -1001,7 +1002,7 @@ def image_query(b) -> str:
 def focus_next() -> dict:
     st = review_queue.state()
     if not st["order"]:
-        return {"counts": {k: st[k] for k in ("to_review", "ready", "published", "total")}, "book": None}
+        return {"counts": {k: st[k] for k in ("to_review", "in_hand", "ready", "published", "total")}, "book": None}
     return focus_book(st["order"][0])
 
 
@@ -1027,6 +1028,65 @@ def warm(row_id: str) -> None:
     threading.Thread(target=go, daemon=True).start()
 
 
+# ---------------------------------------------------------------- saving one book
+def save_book(data: dict) -> None:
+    """The editor's Save: details (from a match or as read, with edits), which
+    cover and spine to use. Applied at once; published in the background."""
+    row = str(data["row_id"])
+    d = data.get("details") or {}
+    cover, spine = data.get("cover") or "match", data.get("spine") or "keep"
+    if cover not in ("match", "mine", "none") or spine not in ("shelf", "mine", "none", "keep"):
+        raise ValueError("bad cover or spine choice")
+    pick = {k: str(d.get(k) or "").strip() for k in ("title", "author", "year", "publisher", "isbn")}
+    if not pick["title"]:
+        raise ValueError("a title is needed")
+    pick["sources"] = {k: str(v) for k, v in (d.get("sources") or {}).items() if k in pick}
+    m = d.get("match") or {}
+    if d.get("base") == "match" and m:
+        decision = "pick"
+        pick.update(source=m.get("source", ""), work_id=m.get("work_id", ""), gb_id=m.get("gb_id", ""),
+                    cover_url=m.get("cover_url", "") if cover == "match" else "")
+    else:
+        decision = "no-match"
+    own = local_images.images_for(row)
+    if "cover" in own:
+        local_images.set_published(row, "cover", cover == "mine")
+    if "spine" in own and spine == "none":
+        local_images.set_published(row, "spine", False)
+    review_queue.decide(row, decision, json.dumps(pick, ensure_ascii=False))
+    AUTO["last_save"] = time.time()
+
+
+AUTO = {"on": True, "last_save": 0.0, "last_ok": 0.0, "last_error": "", "failed_at": 0.0}
+
+
+def autopublisher() -> None:
+    """Publish in the background: after five saved books, or when you pause."""
+    while True:
+        time.sleep(10)
+        try:
+            if not AUTO["on"]:
+                continue
+            with JOB_LOCK:
+                if JOB["running"]:
+                    continue
+            ready = review_queue.state()["ready"]
+            idle = time.time() - AUTO["last_save"]
+            if ready and idle > 8 and (ready >= 5 or idle > 90) and time.time() - AUTO["failed_at"] > 600:
+                start_job("publish")
+        except Exception:
+            pass
+
+
+def pub_state() -> dict:
+    st = review_queue.state()
+    with JOB_LOCK:
+        running = JOB["running"] and JOB["action"] == "publish"
+    return {"auto": AUTO["on"], "waiting": st["ready"], "running": running, "last_ok": AUTO["last_ok"],
+            "error": AUTO["last_error"] if AUTO["failed_at"] else "",
+            "counts": {k: st[k] for k in ("to_review", "in_hand", "ready", "published", "total")}}
+
+
 # ---------------------------------------------------------------- jobs
 def start_job(name: str) -> str:
     """Run one ACTIONS entry in the background. Returns '' or a reason it can't start."""
@@ -1044,12 +1104,18 @@ def start_job(name: str) -> str:
             with JOB_LOCK:
                 JOB["log"].append(line)
         try:
-            ok = pipeline.STEPS[step](log)
+            ok = (pipeline.publish_main(log, lock=review_queue.LOCK) if step == "publish_main"
+                  else pipeline.STEPS[step](log))
         except Exception as e:                      # keep the server alive, report it
             log(f"error: {type(e).__name__}: {e}")
             ok = False
         with JOB_LOCK:
             JOB.update(running=False, ok=ok)
+        if step == "publish_main":
+            if ok:
+                AUTO.update(last_ok=time.time(), last_error="", failed_at=0.0)
+            else:
+                AUTO.update(failed_at=time.time(), last_error=(JOB["log"] or ["failed"])[-1])
         if ok and name == "update":
             log("Updated. Restarting the review page…")
             restart_soon()
@@ -1249,6 +1315,22 @@ class H(BaseHTTPRequestHandler):
             if self.path == "/api/paste":
                 return self.send(200, json.dumps({"name": local_images.save_pasted(str(data.get("data", "")))}),
                                  "application/json")
+            if self.path == "/api/save":
+                save_book(data)
+                return self.send(200, json.dumps(pub_state()), "application/json")
+            if self.path == "/api/attach_data":
+                rel = local_images.attach_bytes(str(data["row_id"]), str(data["kind"]),
+                                                jpeg_from_data_url(str(data.get("data", ""))),
+                                                str(data.get("label") or "your shelf photo"))
+                return self.send(200, json.dumps({"url": "/" + rel}), "application/json")
+            if self.path == "/api/list":
+                return self.send(200, json.dumps(review_queue.listing(str(data.get("bucket", "to_review")),
+                                                                      str(data.get("q", "")))), "application/json")
+            if self.path == "/api/pubstate":
+                return self.send(200, json.dumps(pub_state()), "application/json")
+            if self.path == "/api/autopublish":
+                AUTO["on"] = bool(data.get("on"))
+                return self.send(200, json.dumps(pub_state()), "application/json")
             if self.path == "/api/warm":
                 warm(str(data["row_id"]))
                 return self.send(200, "ok", "text/plain")
@@ -1291,6 +1373,7 @@ def main():
     if PORT != localport.DEFAULT:
         print(f"Using port {PORT}. If you use the 📚 bookmark, drag it to the bookmarks bar again from the ⋯ menu.")
     localport.record(PORT, pipeline.git("rev-parse", "--short", "HEAD"))
+    threading.Thread(target=autopublisher, daemon=True).start()
     atexit.register(localport.forget)
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     url = f"http://127.0.0.1:{PORT}/"
